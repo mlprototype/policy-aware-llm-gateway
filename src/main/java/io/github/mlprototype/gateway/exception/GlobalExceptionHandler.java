@@ -1,8 +1,10 @@
 package io.github.mlprototype.gateway.exception;
 
+import io.github.mlprototype.gateway.api.GatewayHeaders;
 import io.github.mlprototype.gateway.dto.ErrorResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -11,11 +13,6 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 /**
  * Global exception handler for all Gateway endpoints.
- * Converts exceptions to standardized JSON error responses.
- *
- * Extension points:
- * - Sprint 2: AuthenticationException → 401
- * - Sprint 2: RateLimitException → 429
  */
 @Slf4j
 @RestControllerAdvice
@@ -23,18 +20,46 @@ public class GlobalExceptionHandler {
 
     private static final String TRACE_ID_KEY = "traceId";
 
-    @ExceptionHandler(ProviderException.class)
-    public ResponseEntity<ErrorResponse> handleProviderException(ProviderException ex) {
-        log.error("Provider error [{}]: {}", ex.getProviderType(), ex.getMessage());
+    @ExceptionHandler(ProviderRoutingException.class)
+    public ResponseEntity<ErrorResponse> handleProviderRoutingException(ProviderRoutingException ex) {
+        log.error("Provider routing error [requested={}, resolved={}]: {}",
+                ex.getRequestedProvider(), ex.getResolvedProvider(), ex.getMessage());
 
         ErrorResponse body = ErrorResponse.builder()
-                .status(HttpStatus.BAD_GATEWAY.value())
-                .error("Bad Gateway")
+                .status(ex.getStatusCode())
+                .error(httpError(ex.getStatusCode()))
                 .message(ex.getMessage())
                 .traceId(MDC.get(TRACE_ID_KEY))
                 .build();
 
-        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(body);
+        HttpHeaders headers = new HttpHeaders();
+        if (ex.getRequestedProvider() != null) {
+            headers.add(GatewayHeaders.REQUESTED_PROVIDER_HEADER, ex.getRequestedProvider().getValue());
+        }
+        if (ex.getResolvedProvider() != null) {
+            headers.add(GatewayHeaders.PROVIDER_HEADER, ex.getResolvedProvider().getValue());
+        }
+        headers.add(GatewayHeaders.FALLBACK_USED_HEADER, String.valueOf(ex.isFallbackUsed()));
+
+        return ResponseEntity.status(ex.getStatusCode()).headers(headers).body(body);
+    }
+
+    @ExceptionHandler(ProviderException.class)
+    public ResponseEntity<ErrorResponse> handleProviderException(ProviderException ex) {
+        log.error("Provider error [{} / {}]: {}",
+                ex.getProviderType(), ex.getFailureType(), ex.getMessage());
+
+        ErrorResponse body = ErrorResponse.builder()
+                .status(ex.getStatusCode())
+                .error(httpError(ex.getStatusCode()))
+                .message(ex.getMessage())
+                .traceId(MDC.get(TRACE_ID_KEY))
+                .build();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.add(GatewayHeaders.PROVIDER_HEADER, ex.getProviderType().getValue());
+        headers.add(GatewayHeaders.FALLBACK_USED_HEADER, "false");
+        return ResponseEntity.status(ex.getStatusCode()).headers(headers).body(body);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -76,7 +101,7 @@ public class GlobalExceptionHandler {
 
         ErrorResponse body = ErrorResponse.builder()
                 .status(ex.getStatusCode())
-                .error("Gateway Error")
+                .error(httpError(ex.getStatusCode()))
                 .message(ex.getMessage())
                 .traceId(MDC.get(TRACE_ID_KEY))
                 .build();
@@ -96,5 +121,17 @@ public class GlobalExceptionHandler {
                 .build();
 
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
+    }
+
+    private String httpError(int statusCode) {
+        return switch (statusCode) {
+            case 400 -> "Bad Request";
+            case 401 -> "Unauthorized";
+            case 403 -> "Forbidden";
+            case 429 -> "Too Many Requests";
+            case 502 -> "Bad Gateway";
+            case 503 -> "Service Unavailable";
+            default -> "Gateway Error";
+        };
     }
 }

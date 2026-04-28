@@ -1,0 +1,43 @@
+spring:
+  application:
+    name: llm-gateway
+  threads:
+    virtual:
+      enabled: true
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    default-property-inclusion: non_null
+    deserialization:
+      fail-on-unknown-properties: false
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: 8080
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+gateway:
+  security:
+    api-key: ${GATEWAY_API_KEY:default-dev-key}
+  provider:
+    default: openai
+    openai:
+      base-url: https://api.openai.com/v1
+      api-key: ${OPENAI_API_KEY:}
+      timeout-seconds: 30
+      default-model: gpt-4o-mini
+      max-tokens-limit: 4096

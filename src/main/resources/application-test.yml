@@ -1,0 +1,19 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/gateway_test
+    username: gateway
+    password: gateway_test
+  flyway:
+    clean-disabled: false
+
+gateway:
+  security:
+    api-key: test-gateway-key
+  provider:
+    openai:
+      api-key: test-key-not-real
+      timeout-seconds: 5
+
+logging:
+  level:
+    io.github.mlprototype.gateway: WARN

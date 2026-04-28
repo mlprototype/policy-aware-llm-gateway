@@ -5,11 +5,12 @@ import io.github.mlprototype.gateway.audit.AuditLogger;
 import io.github.mlprototype.gateway.dto.ChatRequest;
 import io.github.mlprototype.gateway.dto.ChatResponse;
 import io.github.mlprototype.gateway.exception.ProviderException;
-import io.github.mlprototype.gateway.filter.LatencyFilter;
 import io.github.mlprototype.gateway.filter.TraceIdFilter;
 import io.github.mlprototype.gateway.provider.LlmProvider;
 import io.github.mlprototype.gateway.provider.ProviderType;
 import io.github.mlprototype.gateway.router.ProviderRouter;
+import io.github.mlprototype.gateway.security.RequestContext;
+import io.github.mlprototype.gateway.security.RequestContextHolder;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -45,6 +46,9 @@ public class ChatCompletionController {
             HttpServletRequest httpRequest,
             HttpServletResponse httpResponse) {
 
+        // Get authenticated context
+        RequestContext ctx = RequestContextHolder.getRequired();
+
         // Resolve provider
         ProviderType providerType = null;
         if (providerHeader != null && !providerHeader.isBlank()) {
@@ -66,6 +70,8 @@ public class ChatCompletionController {
             // Audit log
             auditLogger.log(AuditEvent.builder()
                     .traceId(traceId)
+                    .tenantId(ctx.tenantId())
+                    .clientId(ctx.clientId())
                     .provider(provider.getType().getValue())
                     .model(response.getModel())
                     .latencyMs(latency)
@@ -83,6 +89,8 @@ public class ChatCompletionController {
 
             auditLogger.log(AuditEvent.builder()
                     .traceId(traceId)
+                    .tenantId(ctx.tenantId())
+                    .clientId(ctx.clientId())
                     .provider(provider.getType().getValue())
                     .model(request.getModel())
                     .latencyMs(latency)

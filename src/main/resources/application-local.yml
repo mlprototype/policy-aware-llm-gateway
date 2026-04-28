@@ -1,8 +1,14 @@
 spring:
+  flyway:
+    locations: classpath:db/migration,classpath:db/seed
   datasource:
     url: jdbc:postgresql://localhost:5433/gateway
     username: gateway
     password: gateway_local
+  data:
+    redis:
+      host: localhost
+      port: 6379
 
 logging:
   level:

@@ -19,6 +19,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -34,6 +36,28 @@ class ChatCompletionControllerTest {
 
     @MockitoBean
     private AuditLogger auditLogger;
+
+    @MockitoBean
+    private io.github.mlprototype.gateway.security.AuthenticationService authenticationService;
+
+    @MockitoBean
+    private io.github.mlprototype.gateway.ratelimit.RateLimiter rateLimiter;
+
+    @org.junit.jupiter.api.BeforeEach
+    void setUp() {
+        // Mock AuthenticationService for ApiKeyFilter
+        when(authenticationService.authenticate("test-gateway-key"))
+                .thenReturn(new io.github.mlprototype.gateway.security.RequestContext("tenant-test", "client-test", 60));
+        when(authenticationService.authenticate(org.mockito.ArgumentMatchers.argThat(arg -> !"test-gateway-key".equals(arg))))
+                .thenThrow(new io.github.mlprototype.gateway.exception.GatewayException("Invalid or missing API key", 401));
+
+        // Mock RateLimiter for RateLimitFilter
+        when(rateLimiter.check(anyString(), anyInt()))
+                .thenReturn(new io.github.mlprototype.gateway.ratelimit.RateLimiter.RateLimitResult(
+                        io.github.mlprototype.gateway.ratelimit.RateLimiter.RateLimitResult.Status.ALLOWED, 60, 59));
+    }
+
+
 
     @TestConfiguration
     static class TestConfig {

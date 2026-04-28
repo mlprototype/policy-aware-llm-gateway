@@ -1,4 +1,6 @@
 spring:
+  flyway:
+    locations: classpath:db/migration,classpath:db/seed
   datasource:
     url: jdbc:postgresql://localhost:5432/gateway_test
     username: gateway
@@ -11,6 +13,9 @@ gateway:
     api-key: test-gateway-key
   provider:
     openai:
+      api-key: test-key-not-real
+      timeout-seconds: 5
+    anthropic:
       api-key: test-key-not-real
       timeout-seconds: 5
 

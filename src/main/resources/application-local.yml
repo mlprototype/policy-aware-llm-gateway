@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/gateway
+    url: jdbc:postgresql://localhost:5433/gateway
     username: gateway
     password: gateway_local
 

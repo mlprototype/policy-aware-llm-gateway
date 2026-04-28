@@ -36,4 +36,20 @@ public class RestClientConfig {
         factory.setReadTimeout(Duration.ofSeconds(timeoutSeconds));
         return factory;
     }
+
+    @Bean("anthropicRestClient")
+    public RestClient anthropicRestClient(
+            @Value("${gateway.provider.anthropic.base-url}") String baseUrl,
+            @Value("${gateway.provider.anthropic.api-key}") String apiKey,
+            @Value("${gateway.provider.anthropic.api-version:2023-06-01}") String apiVersion,
+            @Value("${gateway.provider.anthropic.timeout-seconds:30}") int timeoutSeconds) {
+
+        return RestClient.builder()
+                .baseUrl(baseUrl)
+                .defaultHeader("x-api-key", apiKey)
+                .defaultHeader("anthropic-version", apiVersion)
+                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .requestFactory(clientHttpRequestFactory(timeoutSeconds))
+                .build();
+    }
 }

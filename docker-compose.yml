@@ -8,10 +8,14 @@ services:
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/gateway
       - SPRING_DATASOURCE_USERNAME=gateway
       - SPRING_DATASOURCE_PASSWORD=gateway_local
+      - SPRING_DATA_REDIS_HOST=redis
       - GATEWAY_API_KEY=${GATEWAY_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
 
@@ -27,6 +31,16 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5

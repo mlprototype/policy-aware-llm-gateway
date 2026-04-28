@@ -6,8 +6,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * Audit logger that outputs structured JSON log entries.
- * Sprint 1: SLF4J structured logging only.
- * Sprint 4 extension: DB persistence via AuditRepository.
+ * Sprint 2: SLF4J structured logging only (log-output model).
+ * Sprint 4 extension: DB persistence via separate AuditLogEntity.
  */
 @Slf4j
 @Component
@@ -15,7 +15,7 @@ public class AuditLogger {
 
     /**
      * Logs an audit event as structured JSON.
-     * Fields: trace_id, provider, model, latency_ms, status, tokens.
+     * Fields: trace_id, tenant_id, client_id, provider, model, latency_ms, status, tokens, rate_limit_result.
      */
     public void log(AuditEvent event) {
         if ("error".equals(event.getStatus())) {
@@ -30,6 +30,8 @@ public class AuditLogger {
     private java.util.Map<String, Object> toMap(AuditEvent event) {
         var map = new java.util.LinkedHashMap<String, Object>();
         map.put("trace_id", event.getTraceId());
+        map.put("tenant_id", event.getTenantId());
+        map.put("client_id", event.getClientId());
         map.put("provider", event.getProvider());
         map.put("model", event.getModel());
         map.put("latency_ms", event.getLatencyMs());
@@ -42,6 +44,9 @@ public class AuditLogger {
         }
         if (event.getErrorMessage() != null) {
             map.put("error_message", event.getErrorMessage());
+        }
+        if (event.getRateLimitResult() != null) {
+            map.put("rate_limit_result", event.getRateLimitResult());
         }
         return map;
     }

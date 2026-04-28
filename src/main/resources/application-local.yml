@@ -1,0 +1,9 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5433/gateway
+    username: gateway
+    password: gateway_local
+
+logging:
+  level:
+    io.github.mlprototype.gateway: DEBUG

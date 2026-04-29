@@ -33,10 +33,11 @@ graph TD
         Auth[AuthenticationService<br/>DB / SHA-256]
         RL[RateLimiter<br/>Redis]
         Ctrl[ChatCompletionController]
+        Security[ContentSecurityService<br/>PII & Injection]
         Router[ProviderRoutingService]
         Registry[ProviderRegistry]
         CB[CircuitBreakerProviderInvoker]
-        Audit["AuditLogger<br/>(log only / Sprint4でDB永続化)"]
+        Audit["AuditLogger<br/>(Fail-open DB Persistence)"]
     end
 
     subgraph Provider Layer
@@ -48,7 +49,8 @@ graph TD
     F3 -.->|Validate & Fetch Context| Auth
     F4 -.->|Check Window| RL
     F4 -->|Authenticated & Allowed| Ctrl
-    Ctrl --> Router
+    Ctrl --> Security
+    Security --> Router
     Router --> Registry
     Router --> CB
     Registry --> OpenAI
@@ -58,7 +60,7 @@ graph TD
     OpenAI <-->|HTTPS| ExtO[(OpenAI API)]
     Anthropic <-->|HTTPS| ExtA[(Anthropic API)]
 
-    Ctrl -.->|Audit Event| Audit
+    Ctrl -.->|Audit Event (Async)| Audit
     OpenAI -.->|Usage Data| Audit
     Anthropic -.->|Usage Data| Audit
 ```
@@ -74,6 +76,8 @@ graph TD
 | `X-Gateway-Fallback-Used` | fallback routing が実行されたか (`true` / `false`) |
 | `X-RateLimit-Limit` | テナントごとの 1 分間あたりのリクエスト上限 |
 | `X-RateLimit-Remaining` | 現在の 1 分間における残りリクエスト可能数 |
+| `X-Gateway-Security-Blocked` | セキュリティポリシー違反によりブロックされた場合 (`true`) |
+| `X-Gateway-Block-Reason` | ブロック理由 (`PII_DETECTED`, `INJECTION_DETECTED`) |
 
 ---
 
@@ -87,6 +91,7 @@ graph TD
 | 認証方式 (Sprint 2) | DB (SHA-256) | deterministic hash による lookup simplicity を優先。stronger secret rotation / vault integration は future work。 |
 | レートリミット (Sprint 2) | Redis Fixed-Window | Fail-open 設計 (Redis 障害時でもリクエストをブロックしない)。Retry-After は現状 60 秒固定 (将来 window 残り時間へ改善可能)。 |
 | 可用性戦略 (Sprint 3) | controlled degradation | timeout / 5xx / breaker-open 時に single-step fallback を許可し、provider 4xx や invalid response は隠蔽しすぎない。 |
+| セキュリティ監査 (Sprint 4) | ContentSecurityService + Async AuditDB | PIIマスキングやインジェクション検知をルーティング前に実施。監査ログ保存はDBダウン時にもメインフローを止めない Fail-open 設計。テナントごとのポリシー(BLOCK, MASK, WARN)を動的に適用。 |
 | ビルドツール | Gradle (Groovy DSL) | Spring Boot 標準、CI キャッシュ親和性 |
 ---
 
@@ -221,11 +226,23 @@ OpenAI Chat Completions API 互換エンドポイント。
 
 ### HTTP Semantics
 
+- `400 Bad Request`: invalid request format, OR security policy violation (PII/Injection blocked)
 - `401 Unauthorized`: missing or invalid API key
 - `403 Forbidden`: authenticated, but tenant is suspended
 - `429 Too Many Requests`: tenant rate limit exceeded
 - `502 Bad Gateway`: upstream provider 4xx / 5xx / invalid response
 - `503 Service Unavailable`: timeout / connection error / circuit breaker open
+
+### Security & Policies
+
+テナントごとにセキュリティポリシー（PII アクション・インジェクションアクション）を制御可能です。
+
+- **`ALLOW`**: 何もせず通過。
+- **`WARN`**: リクエストは通過するが、監査ログに検知フラグを立てて記録。
+- **`MASK`**: (PII専用) リクエスト本文の該当文字列を `[EMAIL_REDACTED]` などにマスクして Provider へ送信。
+- **`BLOCK`**: 400 Bad Request で遮断。アップストリームへは送信しない。
+
+> **Note:** PII BLOCK の優先順位は最上位となります。同一リクエスト内で PII とインジェクションが検知された場合、PII のアクションが BLOCK であれば即時エラーとなります。
 
 ### Degraded Mode
 
@@ -246,13 +263,13 @@ src/main/java/io/github/mlprototype/gateway/
 ├── dto/              # Request / Response DTOs
 ├── exception/        # Global exception handler
 ├── filter/           # Servlet filters (TraceId, Latency, ApiKey, RateLimit)
+├── content/          # (Sprint 4) Security & Content filtering (PII / Injection)
 ├── provider/         # LLM Provider abstraction
 │   ├── openai/       # OpenAI implementation
 │   └── anthropic/    # Anthropic implementation
 ├── ratelimit/        # Redis-based fixed-window rate limiting
 ├── router/           # Provider routing logic
-├── security/         # Tenant / API client authentication
-└── policy/           # (Sprint 3+: policy engine)
+└── security/         # Tenant / API client authentication
 ```
 
 ---
@@ -319,15 +336,15 @@ done
 |:---|:---|:---|
 | **1** | Gateway 骨格, OpenAI proxy, API Key 認証, trace/audit, Docker | ✅ Done |
 | **2** | Anthropic provider, tenant 認証 (DB), rate limiting, Redis | ✅ Done |
-| 3 | Circuit Breaker (Resilience4j), fallback routing | ✅ Implemented |
-| 4 | PII masking, prompt injection detection, audit DB 永続化 | — |
+| **3** | Circuit Breaker (Resilience4j), fallback routing | ✅ Done |
+| **4** | PII masking, prompt injection detection, audit DB 永続化 | ✅ Done |
 | 5 | Prometheus / Grafana dashboard, OpenTelemetry | — |
 
 ---
 
 ## Current Status
 
-Sprint 3 までで実装済み:
+Sprint 4 までで実装済み:
 
 - **Multi-provider support**: OpenAI / Anthropic の 2 Provider に対応
 - **Tenant-based authentication**: DB (`tenants`, `api_clients`) と SHA-256 hash による API key 認証
@@ -335,11 +352,8 @@ Sprint 3 までで実装済み:
 - **Circuit Breaker**: provider 単位の Resilience4j breaker
 - **Fallback routing**: timeout / 5xx / breaker-open 時の single-step fallback
 - **Degraded mode visibility**: requested/resolved provider と fallback 使用有無を response header / structured audit log に出力
-
-Not yet implemented:
-
-- audit log persistence (Sprint 4)
-- PII masking / prompt injection detection (Sprint 4)
+- **Content Security**: PII検知/マスキング、プロンプトインジェクション検知、テナントレベルのポリシーエンジン
+- **Persistent Audit Log**: リクエストのハッシュ、サニタイズされたプレビュー、使用トークン、レイテンシを DB へ非同期保存（Fail-open 設計）
 
 ---
 

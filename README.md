@@ -33,7 +33,7 @@ graph TD
         Auth[AuthenticationService<br/>DB / SHA-256]
         RL[RateLimiter<br/>Redis]
         Ctrl[ChatCompletionController]
-        Security[ContentSecurityService<br/>PII & Injection]
+        Security["ContentSecurityService<br/>PII and Injection"]
         Router[ProviderRoutingService]
         Registry[ProviderRegistry]
         CB[CircuitBreakerProviderInvoker]
@@ -46,9 +46,9 @@ graph TD
     end
 
     C -->|HTTP POST| F1
-    F3 -.->|Validate & Fetch Context| Auth
+    F3 -.->|Validate and Fetch Context| Auth
     F4 -.->|Check Window| RL
-    F4 -->|Authenticated & Allowed| Ctrl
+    F4 -->|Authenticated and Allowed| Ctrl
     Ctrl --> Security
     Security --> Router
     Router --> Registry
@@ -60,7 +60,7 @@ graph TD
     OpenAI <-->|HTTPS| ExtO[(OpenAI API)]
     Anthropic <-->|HTTPS| ExtA[(Anthropic API)]
 
-    Ctrl -.->|Audit Event (Async)| Audit
+    Ctrl -.->|Async Audit Event| Audit
     OpenAI -.->|Usage Data| Audit
     Anthropic -.->|Usage Data| Audit
 ```

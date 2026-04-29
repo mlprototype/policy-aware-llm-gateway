@@ -2,6 +2,9 @@ package io.github.mlprototype.gateway.api;
 
 import io.github.mlprototype.gateway.audit.AuditEvent;
 import io.github.mlprototype.gateway.audit.AuditLogger;
+import io.github.mlprototype.gateway.content.ContentSecurityResult;
+import io.github.mlprototype.gateway.content.ContentSecurityService;
+import io.github.mlprototype.gateway.content.SecurityBlockException;
 import io.github.mlprototype.gateway.dto.ChatRequest;
 import io.github.mlprototype.gateway.dto.ChatResponse;
 import io.github.mlprototype.gateway.exception.ProviderRoutingException;
@@ -30,6 +33,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class ChatCompletionController {
 
     private final ProviderRoutingService providerRoutingService;
+    private final ContentSecurityService contentSecurityService;
     private final AuditLogger auditLogger;
 
     @PostMapping("/chat/completions")
@@ -44,9 +48,35 @@ public class ChatCompletionController {
         String traceId = (String) httpRequest.getAttribute(TraceIdFilter.MDC_TRACE_ID);
         long startTime = System.currentTimeMillis();
 
+        ContentSecurityResult securityResult;
+        try {
+            securityResult = contentSecurityService.evaluate(request, ctx.piiAction(), ctx.injectionAction());
+        } catch (SecurityBlockException ex) {
+            long latency = System.currentTimeMillis() - startTime;
+            auditLogger.log(AuditEvent.builder()
+                    .traceId(traceId)
+                    .tenantId(ctx.tenantId())
+                    .clientId(ctx.clientId())
+                    .model(request.getModel())
+                    .latencyMs(latency)
+                    .statusCode(ex.getStatusCode())
+                    .status("blocked")
+                    .errorMessage(ex.getMessage())
+                    .piiDetected(ex.getDecision().piiResult().detected())
+                    .piiAction(ex.getDecision().piiAction().name())
+                    .piiPatterns(ex.getDecision().piiResult().matchedPatterns().toString())
+                    .injectionDetected(ex.getDecision().injectionResult().detected())
+                    .injectionAction(ex.getDecision().injectionAction().name())
+                    .injectionRules(ex.getDecision().injectionResult().matchedRules().toString())
+                    .requestHash(ex.getRequestHash())
+                    .requestPreview(ex.getSanitizedPreview())
+                    .build());
+            throw ex;
+        }
+
         try {
             ProviderExecutionResult executionResult = providerRoutingService.execute(
-                    request,
+                    securityResult.effectiveRequest(),
                     requestedProviderHeader,
                     legacyProviderHeader);
             ChatResponse response = executionResult.response();
@@ -74,6 +104,14 @@ public class ChatCompletionController {
                     .promptTokens(response.getUsage() != null ? response.getUsage().getPromptTokens() : null)
                     .completionTokens(response.getUsage() != null ? response.getUsage().getCompletionTokens() : null)
                     .totalTokens(response.getUsage() != null ? response.getUsage().getTotalTokens() : null)
+                    .piiDetected(securityResult.decision().piiResult().detected())
+                    .piiAction(securityResult.decision().piiAction().name())
+                    .piiPatterns(securityResult.decision().piiResult().matchedPatterns().toString())
+                    .injectionDetected(securityResult.decision().injectionResult().detected())
+                    .injectionAction(securityResult.decision().injectionAction().name())
+                    .injectionRules(securityResult.decision().injectionResult().matchedRules().toString())
+                    .requestHash(securityResult.requestHash())
+                    .requestPreview(securityResult.sanitizedPreview())
                     .build());
 
             return ResponseEntity.ok(response);
@@ -98,6 +136,14 @@ public class ChatCompletionController {
                     .statusCode(exception.getStatusCode())
                     .status("error")
                     .errorMessage(exception.getMessage())
+                    .piiDetected(securityResult.decision().piiResult().detected())
+                    .piiAction(securityResult.decision().piiAction().name())
+                    .piiPatterns(securityResult.decision().piiResult().matchedPatterns().toString())
+                    .injectionDetected(securityResult.decision().injectionResult().detected())
+                    .injectionAction(securityResult.decision().injectionAction().name())
+                    .injectionRules(securityResult.decision().injectionResult().matchedRules().toString())
+                    .requestHash(securityResult.requestHash())
+                    .requestPreview(securityResult.sanitizedPreview())
                     .build());
 
             throw exception;

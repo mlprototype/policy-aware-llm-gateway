@@ -30,7 +30,7 @@ class ApiKeyFilterTest {
 
     private static final String VALID_KEY = "test-api-key-123";
     private static final RequestContext TEST_CONTEXT =
-            new RequestContext("tenant-1", "client-1", 60);
+            new RequestContext("tenant-1", "client-1", 60, io.github.mlprototype.gateway.content.PiiAction.MASK, io.github.mlprototype.gateway.content.InjectionAction.WARN);
 
     @BeforeEach
     void setUp() {

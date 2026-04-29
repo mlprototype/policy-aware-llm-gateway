@@ -29,4 +29,14 @@ public class AuditEvent {
     private final Integer totalTokens;
     private final String errorMessage;
     private final String rateLimitResult;  // "allowed" / "rejected" / "redis_unavailable_fail_open"
+
+    // Sprint 4 security fields
+    private final Boolean piiDetected;
+    private final String piiAction;
+    private final String piiPatterns;
+    private final Boolean injectionDetected;
+    private final String injectionAction;
+    private final String injectionRules;
+    private final String requestHash;
+    private final String requestPreview;
 }

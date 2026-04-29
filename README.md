@@ -33,7 +33,9 @@ graph TD
         Auth[AuthenticationService<br/>DB / SHA-256]
         RL[RateLimiter<br/>Redis]
         Ctrl[ChatCompletionController]
-        Router[ProviderRouter]
+        Router[ProviderRoutingService]
+        Registry[ProviderRegistry]
+        CB[CircuitBreakerProviderInvoker]
         Audit["AuditLogger<br/>(log only / Sprint4でDB永続化)"]
     end
 
@@ -47,8 +49,12 @@ graph TD
     F4 -.->|Check Window| RL
     F4 -->|Authenticated & Allowed| Ctrl
     Ctrl --> Router
-    Router --> OpenAI
-    Router --> Anthropic
+    Router --> Registry
+    Router --> CB
+    Registry --> OpenAI
+    Registry --> Anthropic
+    CB --> OpenAI
+    CB --> Anthropic
     OpenAI <-->|HTTPS| ExtO[(OpenAI API)]
     Anthropic <-->|HTTPS| ExtA[(Anthropic API)]
 
@@ -63,7 +69,9 @@ graph TD
 |:---|:---|
 | `X-Gateway-Trace-Id` | リクエスト固有の UUID（MDC でログに連携） |
 | `X-Gateway-Latency-Ms` | Gateway 内の処理時間 (ms) |
+| `X-Gateway-Requested-Provider` | リクエストで要求された provider 名 |
 | `X-Gateway-Provider` | **実解決値** (ルーティング後に実際に使用されたプロバイダ名) |
+| `X-Gateway-Fallback-Used` | fallback routing が実行されたか (`true` / `false`) |
 | `X-RateLimit-Limit` | テナントごとの 1 分間あたりのリクエスト上限 |
 | `X-RateLimit-Remaining` | 現在の 1 分間における残りリクエスト可能数 |
 
@@ -78,6 +86,7 @@ graph TD
 | Provider 抽象化 | Interface + Mapper | LLM プロバイダ追加を低コスト化 |
 | 認証方式 (Sprint 2) | DB (SHA-256) | deterministic hash による lookup simplicity を優先。stronger secret rotation / vault integration は future work。 |
 | レートリミット (Sprint 2) | Redis Fixed-Window | Fail-open 設計 (Redis 障害時でもリクエストをブロックしない)。Retry-After は現状 60 秒固定 (将来 window 残り時間へ改善可能)。 |
+| 可用性戦略 (Sprint 3) | controlled degradation | timeout / 5xx / breaker-open 時に single-step fallback を許可し、provider 4xx や invalid response は隠蔽しすぎない。 |
 | ビルドツール | Gradle (Groovy DSL) | Spring Boot 標準、CI キャッシュ親和性 |
 ---
 
@@ -188,7 +197,8 @@ OpenAI Chat Completions API 互換エンドポイント。
 | Header | Required | Description |
 |:---|:---|:---|
 | `X-API-Key` | ✅ | Gateway 認証キー (DBのテナントと紐付け) |
-| `X-Gateway-Provider` | ❌ | 使用プロバイダの**要求値** (`openai` または `anthropic` / default: `openai`) |
+| `X-Gateway-Requested-Provider` | ❌ | 使用プロバイダの**要求値** (`openai` または `anthropic` / default: `openai`) |
+| `X-Gateway-Provider` | ❌ | request では legacy alias。response では**実解決値**を返す |
 | `X-Request-Id` | ❌ | クライアント指定のトレース ID |
 
 **Request Body:**
@@ -207,11 +217,22 @@ OpenAI Chat Completions API 互換エンドポイント。
 
 **Cost Safety:** `max_tokens` は Gateway 側で上限 4096 にクランプされます。
 
+**Migration Note:** request header は `X-Gateway-Requested-Provider` が正です。`X-Gateway-Provider` を request で送る形式は後方互換のため一時的に許可しています。両方送信して値が不一致の場合は `400 Bad Request` を返します。
+
 ### HTTP Semantics
 
 - `401 Unauthorized`: missing or invalid API key
 - `403 Forbidden`: authenticated, but tenant is suspended
 - `429 Too Many Requests`: tenant rate limit exceeded
+- `502 Bad Gateway`: upstream provider 4xx / 5xx / invalid response
+- `503 Service Unavailable`: timeout / connection error / circuit breaker open
+
+### Degraded Mode
+
+- fallback は 1 段のみです。`openai -> anthropic`、`anthropic -> openai`
+- fallback 対象は `timeout`, `connection error`, `upstream 5xx`, `breaker-open`
+- provider 4xx は fallback しません
+- `INVALID_RESPONSE` は upstream schema drift と mapper 不整合の両方を含み得るため、Sprint 3 では安全側で fallback 対象外にしています
 
 ---
 
@@ -258,7 +279,7 @@ src/main/java/io/github/mlprototype/gateway/
 # Unit + Integration tests (mock-based, no API call)
 ./gradlew test
 
-# E2E smoke test (requires Docker + real API key)
+# Local smoke test (Docker health / basic request)
 docker compose up -d
 source .env
 
@@ -272,7 +293,7 @@ curl -s http://localhost:8080/v1/chat/completions \
 curl -s http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $GATEWAY_API_KEY" \
-  -H "X-Gateway-Provider: anthropic" \
+  -H "X-Gateway-Requested-Provider: anthropic" \
   -d '{"messages":[{"role":"user","content":"What is 2+2? Keep it short."}],"max_tokens":10}'
 
 # 3. Suspended tenant (403)
@@ -298,7 +319,7 @@ done
 |:---|:---|:---|
 | **1** | Gateway 骨格, OpenAI proxy, API Key 認証, trace/audit, Docker | ✅ Done |
 | **2** | Anthropic provider, tenant 認証 (DB), rate limiting, Redis | ✅ Done |
-| 3 | Circuit Breaker (Resilience4j), fallback routing | — |
+| 3 | Circuit Breaker (Resilience4j), fallback routing | ✅ Implemented |
 | 4 | PII masking, prompt injection detection, audit DB 永続化 | — |
 | 5 | Prometheus / Grafana dashboard, OpenTelemetry | — |
 
@@ -306,16 +327,17 @@ done
 
 ## Current Status
 
-Sprint 2 で実装済み:
+Sprint 3 までで実装済み:
 
 - **Multi-provider support**: OpenAI / Anthropic の 2 Provider に対応
 - **Tenant-based authentication**: DB (`tenants`, `api_clients`) と SHA-256 hash による API key 認証
 - **Redis-based rate limiting**: tenant 単位の fixed-window rate limiting（fail-open 設計）
+- **Circuit Breaker**: provider 単位の Resilience4j breaker
+- **Fallback routing**: timeout / 5xx / breaker-open 時の single-step fallback
+- **Degraded mode visibility**: requested/resolved provider と fallback 使用有無を response header / structured audit log に出力
 
-Not yet implemented in Sprint 2:
+Not yet implemented:
 
-- fallback routing (Sprint 3)
-- circuit breaker (Sprint 3)
 - audit log persistence (Sprint 4)
 - PII masking / prompt injection detection (Sprint 4)
 

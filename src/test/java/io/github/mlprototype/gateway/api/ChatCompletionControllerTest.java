@@ -3,17 +3,24 @@ package io.github.mlprototype.gateway.api;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import io.github.mlprototype.gateway.audit.AuditLogger;
-import io.github.mlprototype.gateway.dto.*;
-import io.github.mlprototype.gateway.provider.LlmProvider;
+import io.github.mlprototype.gateway.dto.ChatResponse;
+import io.github.mlprototype.gateway.dto.Choice;
+import io.github.mlprototype.gateway.dto.Message;
+import io.github.mlprototype.gateway.dto.Usage;
+import io.github.mlprototype.gateway.exception.ProviderFailureType;
+import io.github.mlprototype.gateway.exception.ProviderRoutingException;
 import io.github.mlprototype.gateway.provider.ProviderType;
-import io.github.mlprototype.gateway.router.ProviderRouter;
+import io.github.mlprototype.gateway.router.FallbackReason;
+import io.github.mlprototype.gateway.router.ProviderExecutionResult;
+import io.github.mlprototype.gateway.router.ProviderRoutingService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
@@ -23,7 +30,9 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(ChatCompletionController.class)
 class ChatCompletionControllerTest {
@@ -32,7 +41,7 @@ class ChatCompletionControllerTest {
     private MockMvc mockMvc;
 
     @MockitoBean
-    private ProviderRouter providerRouter;
+    private ProviderRoutingService providerRoutingService;
 
     @MockitoBean
     private AuditLogger auditLogger;
@@ -43,21 +52,17 @@ class ChatCompletionControllerTest {
     @MockitoBean
     private io.github.mlprototype.gateway.ratelimit.RateLimiter rateLimiter;
 
-    @org.junit.jupiter.api.BeforeEach
+    @BeforeEach
     void setUp() {
-        // Mock AuthenticationService for ApiKeyFilter
         when(authenticationService.authenticate("test-gateway-key"))
                 .thenReturn(new io.github.mlprototype.gateway.security.RequestContext("tenant-test", "client-test", 60));
         when(authenticationService.authenticate(org.mockito.ArgumentMatchers.argThat(arg -> !"test-gateway-key".equals(arg))))
                 .thenThrow(new io.github.mlprototype.gateway.exception.GatewayException("Invalid or missing API key", 401));
 
-        // Mock RateLimiter for RateLimitFilter
         when(rateLimiter.check(anyString(), anyInt()))
                 .thenReturn(new io.github.mlprototype.gateway.ratelimit.RateLimiter.RateLimitResult(
                         io.github.mlprototype.gateway.ratelimit.RateLimiter.RateLimitResult.Status.ALLOWED, 60, 59));
     }
-
-
 
     @TestConfiguration
     static class TestConfig {
@@ -69,9 +74,15 @@ class ChatCompletionControllerTest {
     }
 
     @Test
-    void createChatCompletion_withValidRequest_returns200() throws Exception {
-        LlmProvider mockProvider = createMockProvider();
-        when(providerRouter.resolve(any())).thenReturn(mockProvider);
+    void createChatCompletion_withValidRequest_returns200AndGatewayHeaders() throws Exception {
+        when(providerRoutingService.execute(any(), any(), any()))
+                .thenReturn(ProviderExecutionResult.builder()
+                        .requestedProvider(ProviderType.OPENAI)
+                        .resolvedProvider(ProviderType.ANTHROPIC)
+                        .fallbackUsed(true)
+                        .fallbackReason(FallbackReason.PRIMARY_TIMEOUT)
+                        .response(createResponse())
+                        .build());
 
         String requestBody = """
                 {
@@ -87,9 +98,45 @@ class ChatCompletionControllerTest {
                         .header("X-API-Key", "test-gateway-key")
                         .content(requestBody))
                 .andExpect(status().isOk())
+                .andExpect(header().string(GatewayHeaders.REQUESTED_PROVIDER_HEADER, "openai"))
+                .andExpect(header().string(GatewayHeaders.PROVIDER_HEADER, "anthropic"))
+                .andExpect(header().string(GatewayHeaders.FALLBACK_USED_HEADER, "true"))
                 .andExpect(jsonPath("$.id").value("chatcmpl-test"))
                 .andExpect(jsonPath("$.model").value("gpt-4o-mini"))
                 .andExpect(jsonPath("$.choices[0].message.content").value("Hello!"));
+    }
+
+    @Test
+    void createChatCompletion_withRoutingFailure_returns503AndHeaders() throws Exception {
+        when(providerRoutingService.execute(any(), any(), any()))
+                .thenThrow(new ProviderRoutingException(
+                        "Fallback provider unavailable",
+                        503,
+                        ProviderType.OPENAI,
+                        ProviderType.ANTHROPIC,
+                        true,
+                        FallbackReason.PRIMARY_TIMEOUT,
+                        ProviderFailureType.TIMEOUT,
+                        ProviderFailureType.BREAKER_OPEN,
+                        null));
+
+        String requestBody = """
+                {
+                    "model": "gpt-4o-mini",
+                    "messages": [
+                        {"role": "user", "content": "Hello"}
+                    ]
+                }
+                """;
+
+        mockMvc.perform(post("/v1/chat/completions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-API-Key", "test-gateway-key")
+                        .content(requestBody))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string(GatewayHeaders.REQUESTED_PROVIDER_HEADER, "openai"))
+                .andExpect(header().string(GatewayHeaders.PROVIDER_HEADER, "anthropic"))
+                .andExpect(header().string(GatewayHeaders.FALLBACK_USED_HEADER, "true"));
     }
 
     @Test
@@ -125,35 +172,25 @@ class ChatCompletionControllerTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    private LlmProvider createMockProvider() {
-        return new LlmProvider() {
-            @Override
-            public ProviderType getType() {
-                return ProviderType.OPENAI;
-            }
-
-            @Override
-            public ChatResponse complete(ChatRequest request) {
-                return ChatResponse.builder()
-                        .id("chatcmpl-test")
-                        .object("chat.completion")
-                        .created(System.currentTimeMillis() / 1000)
-                        .model("gpt-4o-mini")
-                        .choices(List.of(Choice.builder()
-                                .index(0)
-                                .message(Message.builder()
-                                        .role("assistant")
-                                        .content("Hello!")
-                                        .build())
-                                .finishReason("stop")
-                                .build()))
-                        .usage(Usage.builder()
-                                .promptTokens(5)
-                                .completionTokens(2)
-                                .totalTokens(7)
+    private ChatResponse createResponse() {
+        return ChatResponse.builder()
+                .id("chatcmpl-test")
+                .object("chat.completion")
+                .created(System.currentTimeMillis() / 1000)
+                .model("gpt-4o-mini")
+                .choices(List.of(Choice.builder()
+                        .index(0)
+                        .message(Message.builder()
+                                .role("assistant")
+                                .content("Hello!")
                                 .build())
-                        .build();
-            }
-        };
+                        .finishReason("stop")
+                        .build()))
+                .usage(Usage.builder()
+                        .promptTokens(5)
+                        .completionTokens(2)
+                        .totalTokens(7)
+                        .build())
+                .build();
     }
 }

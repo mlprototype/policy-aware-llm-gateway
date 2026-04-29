@@ -4,8 +4,8 @@ import io.github.mlprototype.gateway.dto.ChatRequest;
 import io.github.mlprototype.gateway.dto.ChatResponse;
 import io.github.mlprototype.gateway.exception.ProviderException;
 import io.github.mlprototype.gateway.provider.LlmProvider;
+import io.github.mlprototype.gateway.provider.ProviderFailureClassifier;
 import io.github.mlprototype.gateway.provider.ProviderType;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatusCode;
@@ -19,12 +19,20 @@ import org.springframework.web.client.RestClientException;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class OpenAiProvider implements LlmProvider {
 
-    @Qualifier("openAiRestClient")
     private final RestClient restClient;
     private final OpenAiRequestMapper requestMapper;
+    private final ProviderFailureClassifier failureClassifier;
+
+    public OpenAiProvider(
+            @Qualifier("openAiRestClient") RestClient restClient,
+            OpenAiRequestMapper requestMapper,
+            ProviderFailureClassifier failureClassifier) {
+        this.restClient = restClient;
+        this.requestMapper = requestMapper;
+        this.failureClassifier = failureClassifier;
+    }
 
     @Override
     public ProviderType getType() {
@@ -43,18 +51,16 @@ public class OpenAiProvider implements LlmProvider {
                     .body(openAiRequest)
                     .retrieve()
                     .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
-                        throw new ProviderException(
-                                ProviderType.OPENAI,
-                                "OpenAI client error: " + res.getStatusCode(),
-                                res.getStatusCode().value());
+                        throw failureClassifier.upstream4xx(ProviderType.OPENAI, res.getStatusCode().value());
                     })
                     .onStatus(HttpStatusCode::is5xxServerError, (req, res) -> {
-                        throw new ProviderException(
-                                ProviderType.OPENAI,
-                                "OpenAI server error: " + res.getStatusCode(),
-                                res.getStatusCode().value());
+                        throw failureClassifier.upstream5xx(ProviderType.OPENAI, res.getStatusCode().value());
                     })
                     .body(ChatResponse.class);
+
+            if (response == null) {
+                throw failureClassifier.invalidResponse(ProviderType.OPENAI, "Empty response from openai", null);
+            }
 
             log.debug("Received response from OpenAI: id={}", response != null ? response.getId() : "null");
             return response;
@@ -63,7 +69,9 @@ public class OpenAiProvider implements LlmProvider {
             throw e;
         } catch (RestClientException e) {
             log.error("OpenAI request failed: {}", e.getMessage());
-            throw new ProviderException(ProviderType.OPENAI, "Failed to call OpenAI: " + e.getMessage(), 502);
+            throw failureClassifier.classifyClientException(ProviderType.OPENAI, e);
+        } catch (RuntimeException e) {
+            throw failureClassifier.invalidResponse(ProviderType.OPENAI, "Invalid response from openai", e);
         }
     }
 }

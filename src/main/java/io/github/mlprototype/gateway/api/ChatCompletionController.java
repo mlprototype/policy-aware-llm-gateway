@@ -4,18 +4,16 @@ import io.github.mlprototype.gateway.audit.AuditEvent;
 import io.github.mlprototype.gateway.audit.AuditLogger;
 import io.github.mlprototype.gateway.dto.ChatRequest;
 import io.github.mlprototype.gateway.dto.ChatResponse;
-import io.github.mlprototype.gateway.exception.ProviderException;
+import io.github.mlprototype.gateway.exception.ProviderRoutingException;
 import io.github.mlprototype.gateway.filter.TraceIdFilter;
-import io.github.mlprototype.gateway.provider.LlmProvider;
-import io.github.mlprototype.gateway.provider.ProviderType;
-import io.github.mlprototype.gateway.router.ProviderRouter;
+import io.github.mlprototype.gateway.router.ProviderExecutionResult;
+import io.github.mlprototype.gateway.router.ProviderRoutingService;
 import io.github.mlprototype.gateway.security.RequestContext;
 import io.github.mlprototype.gateway.security.RequestContextHolder;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -25,54 +23,50 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * OpenAI-compatible chat completion endpoint.
- * Receives requests in OpenAI format, routes to the appropriate provider,
- * and returns normalized responses with Gateway extension headers.
  */
-@Slf4j
 @RestController
 @RequestMapping("/v1")
 @RequiredArgsConstructor
 public class ChatCompletionController {
 
-    private final ProviderRouter providerRouter;
+    private final ProviderRoutingService providerRoutingService;
     private final AuditLogger auditLogger;
-
-    public static final String PROVIDER_HEADER = "X-Gateway-Provider";
 
     @PostMapping("/chat/completions")
     public ResponseEntity<ChatResponse> createChatCompletion(
             @Valid @RequestBody ChatRequest request,
-            @RequestHeader(value = PROVIDER_HEADER, required = false) String providerHeader,
+            @RequestHeader(value = GatewayHeaders.REQUESTED_PROVIDER_HEADER, required = false) String requestedProviderHeader,
+            @RequestHeader(value = GatewayHeaders.PROVIDER_HEADER, required = false) String legacyProviderHeader,
             HttpServletRequest httpRequest,
             HttpServletResponse httpResponse) {
 
-        // Get authenticated context
         RequestContext ctx = RequestContextHolder.getRequired();
-
-        // Resolve provider
-        ProviderType providerType = null;
-        if (providerHeader != null && !providerHeader.isBlank()) {
-            providerType = ProviderType.fromValue(providerHeader);
-        }
-        LlmProvider provider = providerRouter.resolve(providerType);
-
         String traceId = (String) httpRequest.getAttribute(TraceIdFilter.MDC_TRACE_ID);
         long startTime = System.currentTimeMillis();
 
         try {
-            ChatResponse response = provider.complete(request);
-
+            ProviderExecutionResult executionResult = providerRoutingService.execute(
+                    request,
+                    requestedProviderHeader,
+                    legacyProviderHeader);
+            ChatResponse response = executionResult.response();
             long latency = System.currentTimeMillis() - startTime;
 
-            // Set provider header
-            httpResponse.setHeader(PROVIDER_HEADER, provider.getType().getValue());
+            httpResponse.setHeader(GatewayHeaders.PROVIDER_HEADER, executionResult.resolvedProvider().getValue());
+            httpResponse.setHeader(GatewayHeaders.REQUESTED_PROVIDER_HEADER, executionResult.requestedProvider().getValue());
+            httpResponse.setHeader(GatewayHeaders.FALLBACK_USED_HEADER, String.valueOf(executionResult.fallbackUsed()));
 
-            // Audit log
             auditLogger.log(AuditEvent.builder()
                     .traceId(traceId)
                     .tenantId(ctx.tenantId())
                     .clientId(ctx.clientId())
-                    .provider(provider.getType().getValue())
+                    .provider(executionResult.resolvedProvider().getValue())
+                    .requestedProvider(executionResult.requestedProvider().getValue())
+                    .resolvedProvider(executionResult.resolvedProvider().getValue())
+                    .fallbackUsed(executionResult.fallbackUsed())
+                    .fallbackReason(executionResult.fallbackReason() != null
+                            ? executionResult.fallbackReason().name()
+                            : null)
                     .model(response.getModel())
                     .latencyMs(latency)
                     .statusCode(200)
@@ -83,23 +77,30 @@ public class ChatCompletionController {
                     .build());
 
             return ResponseEntity.ok(response);
-
-        } catch (ProviderException e) {
+        } catch (ProviderRoutingException exception) {
             long latency = System.currentTimeMillis() - startTime;
 
             auditLogger.log(AuditEvent.builder()
                     .traceId(traceId)
                     .tenantId(ctx.tenantId())
                     .clientId(ctx.clientId())
-                    .provider(provider.getType().getValue())
+                    .provider(exception.getResolvedProvider() != null ? exception.getResolvedProvider().getValue() : null)
+                    .requestedProvider(exception.getRequestedProvider() != null
+                            ? exception.getRequestedProvider().getValue()
+                            : null)
+                    .resolvedProvider(exception.getResolvedProvider() != null
+                            ? exception.getResolvedProvider().getValue()
+                            : null)
+                    .fallbackUsed(exception.isFallbackUsed())
+                    .fallbackReason(exception.getFallbackReason() != null ? exception.getFallbackReason().name() : null)
                     .model(request.getModel())
                     .latencyMs(latency)
-                    .statusCode(e.getStatusCode())
+                    .statusCode(exception.getStatusCode())
                     .status("error")
-                    .errorMessage(e.getMessage())
+                    .errorMessage(exception.getMessage())
                     .build());
 
-            throw e;
+            throw exception;
         }
     }
 }

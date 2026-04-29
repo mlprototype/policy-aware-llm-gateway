@@ -33,6 +33,18 @@ public class AuditLogger {
         map.put("tenant_id", event.getTenantId());
         map.put("client_id", event.getClientId());
         map.put("provider", event.getProvider());
+        if (event.getRequestedProvider() != null) {
+            map.put("requested_provider", event.getRequestedProvider());
+        }
+        if (event.getResolvedProvider() != null) {
+            map.put("resolved_provider", event.getResolvedProvider());
+        }
+        if (event.getFallbackUsed() != null) {
+            map.put("fallback_used", event.getFallbackUsed());
+        }
+        if (event.getFallbackReason() != null) {
+            map.put("fallback_reason", event.getFallbackReason());
+        }
         map.put("model", event.getModel());
         map.put("latency_ms", event.getLatencyMs());
         map.put("status_code", event.getStatusCode());

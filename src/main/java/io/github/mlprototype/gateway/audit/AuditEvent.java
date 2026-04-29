@@ -16,6 +16,10 @@ public class AuditEvent {
     private final String tenantId;
     private final String clientId;
     private final String provider;
+    private final String requestedProvider;
+    private final String resolvedProvider;
+    private final Boolean fallbackUsed;
+    private final String fallbackReason;
     private final String model;
     private final long latencyMs;
     private final int statusCode;

@@ -30,6 +30,27 @@ management:
     health:
       show-details: when-authorized
 
+resilience4j:
+  circuitbreaker:
+    configs:
+      llm-provider-default:
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 20
+        minimumNumberOfCalls: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        registerHealthIndicator: true
+        writableStackTraceEnabled: false
+        ignoreExceptions:
+          - io.github.mlprototype.gateway.exception.Upstream4xxProviderException
+    instances:
+      openai:
+        baseConfig: llm-provider-default
+      anthropic:
+        baseConfig: llm-provider-default
+
 gateway:
   security:
     api-key: ${GATEWAY_API_KEY:default-dev-key}

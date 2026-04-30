@@ -362,7 +362,7 @@ curl -i -s http://localhost:8080/v1/chat/completions \
 
 ## Current Status
 
-Sprint 4 までで実装済み:
+Sprint 5 までで実装済み:
 
 - **Multi-provider support**: OpenAI / Anthropic の 2 Provider に対応
 - **Tenant-based authentication**: DB (`tenants`, `api_clients`) と SHA-256 hash による API key 認証
@@ -372,6 +372,7 @@ Sprint 4 までで実装済み:
 - **Degraded mode visibility**: requested/resolved provider と fallback 使用有無を response header / structured audit log に出力
 - **Content Security**: PII検知/マスキング、プロンプトインジェクション検知、テナントレベルのポリシーエンジン
 - **Persistent Audit Log**: リクエストのハッシュ、サニタイズされたプレビュー、使用トークン、レイテンシを DB へ非同期保存（Fail-open 設計）
+- **Observability**: Prometheus と Grafana を使用した、RPS、レイテンシ、エラー内訳、フォールバック、セキュリティブロックの可視化ダッシュボード
 
 ---
 
@@ -386,8 +387,4 @@ Sprint 4 までで実装済み:
 ## License
 
 This repository is published for portfolio purposes only.
-Reuse or redistribution is not permitted without prior permission.
-ses only.
-Reuse or redistribution is not permitted without prior permission.
- repository is published for portfolio purposes only.
 Reuse or redistribution is not permitted without prior permission.

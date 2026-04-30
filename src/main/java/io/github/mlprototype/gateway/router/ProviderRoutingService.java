@@ -5,6 +5,7 @@ import io.github.mlprototype.gateway.dto.ChatRequest;
 import io.github.mlprototype.gateway.dto.ChatResponse;
 import io.github.mlprototype.gateway.exception.ProviderException;
 import io.github.mlprototype.gateway.exception.ProviderRoutingException;
+import io.github.mlprototype.gateway.observability.GatewayMetrics;
 import io.github.mlprototype.gateway.provider.LlmProvider;
 import io.github.mlprototype.gateway.provider.ProviderType;
 import io.github.mlprototype.gateway.resilience.CircuitBreakerProviderInvoker;
@@ -29,6 +30,7 @@ public class ProviderRoutingService {
     private final ProviderRoutingProperties routingProperties;
     private final FallbackPolicy fallbackPolicy;
     private final CircuitBreakerProviderInvoker circuitBreakerProviderInvoker;
+    private final GatewayMetrics gatewayMetrics;
 
     public ProviderExecutionResult execute(
             ChatRequest request,
@@ -99,6 +101,10 @@ public class ProviderRoutingService {
 
         try {
             ChatResponse response = circuitBreakerProviderInvoker.invoke(fallbackProvider, request);
+            gatewayMetrics.incrementFallbackSuccess(
+                    primaryProvider.getType().getValue(),
+                    fallbackProvider.getType().getValue(),
+                    fallbackReason.name());
             return ProviderExecutionResult.builder()
                     .requestedProvider(requestedProvider)
                     .resolvedProvider(fallbackProvider.getType())
@@ -178,3 +184,4 @@ public class ProviderRoutingService {
         return fields;
     }
 }
+

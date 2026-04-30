@@ -3,6 +3,7 @@ package io.github.mlprototype.gateway.ratelimit;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.mlprototype.gateway.dto.ErrorResponse;
 import io.github.mlprototype.gateway.filter.TraceIdFilter;
+import io.github.mlprototype.gateway.observability.GatewayMetrics;
 import io.github.mlprototype.gateway.security.RequestContext;
 import io.github.mlprototype.gateway.security.RequestContextHolder;
 import jakarta.servlet.FilterChain;
@@ -37,6 +38,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private final RateLimiter rateLimiter;
     private final ObjectMapper objectMapper;
+    private final GatewayMetrics gatewayMetrics;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -65,6 +67,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         request.setAttribute("rateLimitResult", result.toAuditString());
 
         if (result.isRejected()) {
+            gatewayMetrics.incrementRateLimitReject();
             log.warn("Rate limit exceeded: tenant={}, limit={}/min",
                     ctx.tenantId(), result.limit());
 
@@ -95,3 +98,4 @@ public class RateLimitFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 }
+

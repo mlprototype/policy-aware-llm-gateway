@@ -55,6 +55,9 @@ class ChatCompletionControllerTest {
     @MockitoBean
     private io.github.mlprototype.gateway.ratelimit.RateLimiter rateLimiter;
 
+    @MockitoBean
+    private io.github.mlprototype.gateway.observability.GatewayMetrics gatewayMetrics;
+
     @BeforeEach
     void setUp() {
         when(authenticationService.authenticate("test-gateway-key"))

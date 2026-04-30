@@ -28,6 +28,9 @@ class ProviderRoutingServiceTest {
     @Mock
     private CircuitBreakerProviderInvoker circuitBreakerProviderInvoker;
 
+    @Mock
+    private io.github.mlprototype.gateway.observability.GatewayMetrics gatewayMetrics;
+
     private ProviderRoutingService providerRoutingService;
     private LlmProvider openAiProvider;
     private LlmProvider anthropicProvider;
@@ -44,7 +47,8 @@ class ProviderRoutingServiceTest {
                 new ProviderRegistry(List.of(openAiProvider, anthropicProvider)),
                 properties,
                 new FallbackPolicy(),
-                circuitBreakerProviderInvoker);
+                circuitBreakerProviderInvoker,
+                gatewayMetrics);
     }
 
     @Test

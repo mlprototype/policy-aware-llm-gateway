@@ -24,7 +24,8 @@ class CircuitBreakerProviderInvokerTest {
         CircuitBreakerRegistry registry = CircuitBreakerRegistry.of(config);
         registry.circuitBreaker("openai");
         registry.circuitBreaker("anthropic");
-        invoker = new CircuitBreakerProviderInvoker(registry);
+        io.github.mlprototype.gateway.observability.GatewayMetrics gatewayMetrics = org.mockito.Mockito.mock(io.github.mlprototype.gateway.observability.GatewayMetrics.class);
+        invoker = new CircuitBreakerProviderInvoker(registry, gatewayMetrics);
     }
 
     @Test
@@ -40,7 +41,8 @@ class CircuitBreakerProviderInvokerTest {
     void invoke_whenOpen_throwsBreakerOpenProviderException() {
         CircuitBreakerRegistry registry = CircuitBreakerRegistry.ofDefaults();
         registry.circuitBreaker("openai").transitionToOpenState();
-        CircuitBreakerProviderInvoker openInvoker = new CircuitBreakerProviderInvoker(registry);
+        io.github.mlprototype.gateway.observability.GatewayMetrics gatewayMetrics = org.mockito.Mockito.mock(io.github.mlprototype.gateway.observability.GatewayMetrics.class);
+        CircuitBreakerProviderInvoker openInvoker = new CircuitBreakerProviderInvoker(registry, gatewayMetrics);
 
         assertThatThrownBy(() -> openInvoker.invoke(
                 new TestProvider(ProviderType.OPENAI, ChatResponse.builder().build()),

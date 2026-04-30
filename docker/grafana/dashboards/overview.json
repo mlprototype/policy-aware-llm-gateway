@@ -1,0 +1,116 @@
+{
+  "title": "LLM Gateway Overview",
+  "uid": "llm-gateway-overview",
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Gateway Total Requests (RPS)",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_requests_seconds_count{uri=\"/v1/chat/completions\"}[1m]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "decimals": 2 } }
+    },
+    {
+      "type": "stat",
+      "title": "Provider Error Rate (%)",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(gateway_provider_failures_total[1m])) / sum(rate(gateway_provider_requests_seconds_count[1m])) * 100",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "decimals": 2, "color": { "mode": "thresholds", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 5 } ] } } }
+    },
+    {
+      "type": "stat",
+      "title": "Rate Limit Rejects",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(increase(gateway_ratelimit_rejects_total[1m]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 } }
+    },
+    {
+      "type": "stat",
+      "title": "Security Blocks & Warns",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(increase(gateway_security_blocks_total[1m]))",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(gateway_security_warns_total[1m]))",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 } }
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP Request Latency (p95)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{uri=\"/v1/chat/completions\"}[1m])) by (le))",
+          "refId": "A",
+          "legendFormat": "p95 Latency"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Provider Call Latency (p95)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(gateway_provider_requests_seconds_bucket{status=\"success\"}[1m])) by (provider, le))",
+          "refId": "A",
+          "legendFormat": "{{provider}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "barchart",
+      "title": "Fallback Occurrences (by reason)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "targets": [
+        {
+          "expr": "sum(increase(gateway_routing_fallbacks_total[5m])) by (reason)",
+          "refId": "A",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "options": { "orientation": "horizontal" }
+    },
+    {
+      "type": "barchart",
+      "title": "Security Blocks (by reason)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "targets": [
+        {
+          "expr": "sum(increase(gateway_security_blocks_total[5m])) by (reason)",
+          "refId": "A",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "options": { "orientation": "horizontal" }
+    }
+  ],
+  "schemaVersion": 38
+}

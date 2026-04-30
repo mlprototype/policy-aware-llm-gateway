@@ -181,6 +181,18 @@ curl -s http://localhost:8080/actuator/health | jq .
 # → {"status":"UP"}
 ```
 
+### 4. Observability Dashboard
+
+Sprint 5 より、Prometheus と Grafana を使った可視化が追加されました。
+
+1. `docker compose up -d` 実行後、数十秒〜1分程度待機します（Prometheus がメトリクスを収集し、Grafana がダッシュボードをプロビジョニングするため）。
+2. ブラウザで Grafana (`http://localhost:3000`) にアクセスします。
+   - ログインは不要です（ローカルデモ用途の簡易設定として匿名アクセスが有効化されています。本番環境での推奨設定ではありません）。
+3. **LLM Gateway Overview** ダッシュボードが自動的にロードされ、以下の情報が視覚的に確認できます。
+   - Gateway Total Requests (RPS)
+   - Provider Error Rate & HTTP Request Latency
+   - Rate Limit Rejects & Security Blocks / Warns
+
 ### Run Locally (without Docker)
 
 PostgreSQL and Redis must be running locally before starting the application.
@@ -344,7 +356,7 @@ curl -i -s http://localhost:8080/v1/chat/completions \
 | **2** | Anthropic provider, tenant 認証 (DB), rate limiting, Redis | ✅ Done |
 | **3** | Circuit Breaker (Resilience4j), fallback routing | ✅ Done |
 | **4** | PII masking, prompt injection detection, audit DB 永続化 | ✅ Done |
-| 5 | Prometheus / Grafana dashboard, OpenTelemetry | — |
+| **5** | Prometheus / Grafana dashboard | ✅ Done |
 
 ---
 
@@ -374,4 +386,8 @@ Sprint 4 までで実装済み:
 ## License
 
 This repository is published for portfolio purposes only.
+Reuse or redistribution is not permitted without prior permission.
+ses only.
+Reuse or redistribution is not permitted without prior permission.
+ repository is published for portfolio purposes only.
 Reuse or redistribution is not permitted without prior permission.

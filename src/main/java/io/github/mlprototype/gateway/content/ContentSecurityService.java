@@ -2,6 +2,7 @@ package io.github.mlprototype.gateway.content;
 
 import io.github.mlprototype.gateway.dto.ChatRequest;
 import io.github.mlprototype.gateway.dto.Message;
+import io.github.mlprototype.gateway.observability.GatewayMetrics;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -22,6 +23,7 @@ public class ContentSecurityService {
     private final PiiDetector piiDetector;
     private final InjectionDetector injectionDetector;
     private final PiiMasker piiMasker;
+    private final GatewayMetrics gatewayMetrics;
 
     /**
      * Evaluates a chat request against security policies.
@@ -51,10 +53,16 @@ public class ContentSecurityService {
 
         // 3. Evaluate Actions (Block Priority: PII > INJECTION)
         if (piiResult.detected() && piiAction == PiiAction.BLOCK) {
+            gatewayMetrics.incrementSecurityBlock("pii");
             throw new SecurityBlockException("PII_DETECTED", decision, 400, sanitizedPreview, requestHash);
         }
         if (injectionResult.detected() && injectionAction == InjectionAction.BLOCK) {
+            gatewayMetrics.incrementSecurityBlock("injection");
             throw new SecurityBlockException("INJECTION_DETECTED", decision, 400, sanitizedPreview, requestHash);
+        }
+        
+        if (injectionResult.detected() && injectionAction == InjectionAction.WARN) {
+            gatewayMetrics.incrementSecurityWarn("injection");
         }
 
         // 4. Apply MASK if needed
@@ -100,3 +108,5 @@ public class ContentSecurityService {
         return full.length() > 200 ? full.substring(0, 200) + "..." : full;
     }
 }
+
+

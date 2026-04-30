@@ -27,9 +27,12 @@ class RateLimitFilterTest {
     @Mock
     private RateLimiter rateLimiter;
 
+    @Mock
+    private io.github.mlprototype.gateway.observability.GatewayMetrics gatewayMetrics;
+
     @BeforeEach
     void setUp() {
-        filter = new RateLimitFilter(rateLimiter, objectMapper);
+        filter = new RateLimitFilter(rateLimiter, objectMapper, gatewayMetrics);
         RequestContextHolder.set(new RequestContext("tenant-1", "client-1", 60, io.github.mlprototype.gateway.content.PiiAction.MASK, io.github.mlprototype.gateway.content.InjectionAction.WARN));
     }
 

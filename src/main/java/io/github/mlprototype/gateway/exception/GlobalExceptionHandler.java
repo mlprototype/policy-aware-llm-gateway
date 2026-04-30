@@ -62,6 +62,27 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(ex.getStatusCode()).headers(headers).body(body);
     }
 
+    @ExceptionHandler(io.github.mlprototype.gateway.content.SecurityBlockException.class)
+    public ResponseEntity<ErrorResponse> handleSecurityBlockException(io.github.mlprototype.gateway.content.SecurityBlockException ex) {
+        log.warn("Security policy violation [{}]: PII={}, Injection={}",
+                ex.getBlockReason(),
+                ex.getDecision().piiResult().detected(),
+                ex.getDecision().injectionResult().detected());
+
+        ErrorResponse body = ErrorResponse.builder()
+                .status(ex.getStatusCode())
+                .error("Bad Request")
+                .message(ex.getMessage())
+                .traceId(MDC.get(TRACE_ID_KEY))
+                .build();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.add("X-Gateway-Security-Blocked", "true");
+        headers.add("X-Gateway-Block-Reason", ex.getBlockReason());
+
+        return ResponseEntity.status(ex.getStatusCode()).headers(headers).body(body);
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> handleValidationException(MethodArgumentNotValidException ex) {
         String message = ex.getBindingResult().getFieldErrors().stream()

@@ -30,7 +30,7 @@ class RateLimitFilterTest {
     @BeforeEach
     void setUp() {
         filter = new RateLimitFilter(rateLimiter, objectMapper);
-        RequestContextHolder.set(new RequestContext("tenant-1", "client-1", 60));
+        RequestContextHolder.set(new RequestContext("tenant-1", "client-1", 60, io.github.mlprototype.gateway.content.PiiAction.MASK, io.github.mlprototype.gateway.content.InjectionAction.WARN));
     }
 
     @AfterEach

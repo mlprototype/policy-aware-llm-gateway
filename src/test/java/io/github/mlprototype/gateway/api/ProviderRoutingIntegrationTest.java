@@ -52,6 +52,12 @@ class ProviderRoutingIntegrationTest {
     private io.github.mlprototype.gateway.security.AuthenticationService authenticationService;
 
     @MockitoBean
+    private io.github.mlprototype.gateway.content.ContentSecurityService contentSecurityService;
+
+    @MockitoBean
+    private io.github.mlprototype.gateway.audit.AuditLogger auditLogger;
+
+    @MockitoBean
     private io.github.mlprototype.gateway.ratelimit.RateLimiter rateLimiter;
 
     @DynamicPropertySource
@@ -68,9 +74,23 @@ class ProviderRoutingIntegrationTest {
         circuitBreakerRegistry.circuitBreaker("anthropic").reset();
 
         when(authenticationService.authenticate("test-gateway-key"))
-                .thenReturn(new io.github.mlprototype.gateway.security.RequestContext("tenant-test", "client-test", 60));
+                .thenReturn(new io.github.mlprototype.gateway.security.RequestContext("tenant-test", "client-test", 60, io.github.mlprototype.gateway.content.PiiAction.MASK, io.github.mlprototype.gateway.content.InjectionAction.WARN));
         when(authenticationService.authenticate(org.mockito.ArgumentMatchers.argThat(arg -> !"test-gateway-key".equals(arg))))
                 .thenThrow(new io.github.mlprototype.gateway.exception.GatewayException("Invalid or missing API key", 401));
+
+        when(contentSecurityService.evaluate(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(invocation -> {
+                    io.github.mlprototype.gateway.dto.ChatRequest req = invocation.getArgument(0);
+                    return new io.github.mlprototype.gateway.content.ContentSecurityResult(
+                            new io.github.mlprototype.gateway.content.SecurityDecision(
+                                    new io.github.mlprototype.gateway.content.PiiDetectionResult(false, java.util.List.of()),
+                                    io.github.mlprototype.gateway.content.PiiAction.MASK,
+                                    new io.github.mlprototype.gateway.content.InjectionDetectionResult(false, java.util.List.of()),
+                                    io.github.mlprototype.gateway.content.InjectionAction.WARN),
+                            req,
+                            "preview",
+                            "hash");
+                });
 
         when(rateLimiter.check(anyString(), anyInt()))
                 .thenReturn(new io.github.mlprototype.gateway.ratelimit.RateLimiter.RateLimitResult(

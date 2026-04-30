@@ -1,5 +1,8 @@
 package io.github.mlprototype.gateway.security;
 
+import io.github.mlprototype.gateway.config.SecurityPolicyProperties;
+import io.github.mlprototype.gateway.content.InjectionAction;
+import io.github.mlprototype.gateway.content.PiiAction;
 import io.github.mlprototype.gateway.exception.GatewayException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,7 +18,7 @@ import java.security.NoSuchAlgorithmException;
  *   1. API Key → SHA-256 hash
  *   2. DB lookup via ApiClientRepository (status=ACTIVE only)
  *   3. Tenant status check (SUSPENDED → 403)
- *   4. RequestContext creation
+ *   4. RequestContext creation with resolved security policies
  */
 @Slf4j
 @Service
@@ -23,6 +26,7 @@ import java.security.NoSuchAlgorithmException;
 public class AuthenticationService {
 
     private final ApiClientRepository apiClientRepository;
+    private final SecurityPolicyProperties securityProperties;
 
     /**
      * Authenticates an API key and returns a RequestContext.
@@ -50,13 +54,41 @@ public class AuthenticationService {
             throw new GatewayException("Tenant is suspended", 403);
         }
 
-        log.debug("Authenticated: tenant={}, client={}", tenant.getName(), client.getName());
+        PiiAction piiAction = resolvePiiAction(tenant.getPiiAction());
+        InjectionAction injectionAction = resolveInjectionAction(tenant.getInjectionAction());
+
+        log.debug("Authenticated: tenant={}, client={}, piiAction={}, injectionAction={}",
+                tenant.getName(), client.getName(), piiAction, injectionAction);
 
         return new RequestContext(
                 tenant.getId().toString(),
                 client.getId().toString(),
-                tenant.getRateLimit()
+                tenant.getRateLimit(),
+                piiAction,
+                injectionAction
         );
+    }
+
+    private PiiAction resolvePiiAction(String tenantPiiAction) {
+        if (tenantPiiAction != null && !tenantPiiAction.isBlank()) {
+            try {
+                return PiiAction.valueOf(tenantPiiAction.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                log.warn("Invalid tenant pii_action: {}", tenantPiiAction);
+            }
+        }
+        return securityProperties.getPiiAction();
+    }
+
+    private InjectionAction resolveInjectionAction(String tenantInjectionAction) {
+        if (tenantInjectionAction != null && !tenantInjectionAction.isBlank()) {
+            try {
+                return InjectionAction.valueOf(tenantInjectionAction.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                log.warn("Invalid tenant injection_action: {}", tenantInjectionAction);
+            }
+        }
+        return securityProperties.getInjectionAction();
     }
 
     /**

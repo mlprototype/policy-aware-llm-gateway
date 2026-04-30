@@ -1,5 +1,8 @@
 package io.github.mlprototype.gateway.security;
 
+import io.github.mlprototype.gateway.content.InjectionAction;
+import io.github.mlprototype.gateway.content.PiiAction;
+
 /**
  * Immutable request context holding authenticated tenant/client information.
  * Set by ApiKeyFilter after successful authentication, read by downstream
@@ -10,6 +13,8 @@ package io.github.mlprototype.gateway.security;
 public record RequestContext(
         String tenantId,
         String clientId,
-        int rateLimitPerMinute
+        int rateLimitPerMinute,
+        PiiAction piiAction,
+        InjectionAction injectionAction
 ) {
 }

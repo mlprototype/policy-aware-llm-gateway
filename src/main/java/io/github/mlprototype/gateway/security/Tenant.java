@@ -43,4 +43,10 @@ public class Tenant {
     @Column(name = "updated_at", nullable = false)
     @Builder.Default
     private Instant updatedAt = Instant.now();
+
+    @Column(name = "pii_action", length = 10)
+    private String piiAction;
+
+    @Column(name = "injection_action", length = 10)
+    private String injectionAction;
 }

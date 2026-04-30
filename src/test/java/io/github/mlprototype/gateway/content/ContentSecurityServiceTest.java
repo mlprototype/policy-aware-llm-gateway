@@ -19,7 +19,8 @@ class ContentSecurityServiceTest {
         PiiDetector piiDetector = new PiiDetector();
         InjectionDetector injectionDetector = new InjectionDetector();
         PiiMasker piiMasker = new PiiMasker();
-        service = new ContentSecurityService(piiDetector, injectionDetector, piiMasker);
+        io.github.mlprototype.gateway.observability.GatewayMetrics gatewayMetrics = org.mockito.Mockito.mock(io.github.mlprototype.gateway.observability.GatewayMetrics.class);
+        service = new ContentSecurityService(piiDetector, injectionDetector, piiMasker, gatewayMetrics);
     }
 
     @Test

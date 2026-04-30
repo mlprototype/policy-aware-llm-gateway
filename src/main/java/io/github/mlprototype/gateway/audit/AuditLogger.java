@@ -1,5 +1,6 @@
 package io.github.mlprototype.gateway.audit;
 
+import io.github.mlprototype.gateway.observability.GatewayMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.logstash.logback.argument.StructuredArguments;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Component;
 public class AuditLogger {
 
     private final AuditLogRepository auditLogRepository;
+    private final GatewayMetrics gatewayMetrics;
 
     /**
      * Logs an audit event as structured JSON and saves it to the database.
@@ -59,6 +61,7 @@ public class AuditLogger {
             auditLogRepository.save(entity);
         } catch (Exception e) {
             // Fail-open: log the error but don't disrupt the main flow
+            gatewayMetrics.incrementAuditPersistenceFailure();
             log.error("Failed to persist audit log to DB for trace_id={}: {}", event.getTraceId(), e.getMessage(), e);
         }
     }
@@ -114,3 +117,4 @@ public class AuditLogger {
         return map;
     }
 }
+

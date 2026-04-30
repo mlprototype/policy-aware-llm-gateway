@@ -58,8 +58,8 @@ graph TD
     Registry --> Anthropic
     CB --> OpenAI
     CB --> Anthropic
-    OpenAI -->|HTTPS| ExtO[(OpenAI API)]
-    Anthropic -->|HTTPS| ExtA[(Anthropic API)]
+    OpenAI <-->|HTTPS| ExtO[(OpenAI API)]
+    Anthropic <-->|HTTPS| ExtA[(Anthropic API)]
 
     Ctrl -.->|Async Audit Event with Usage| Audit
 ```

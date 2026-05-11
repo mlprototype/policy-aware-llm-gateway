@@ -38,6 +38,8 @@ public class PiiMasker {
      * @return the masked chat messages
      */
     public List<Message> mask(List<Message> messages) {
+        // メッセージ自体が存在しない場合はマスキングの必要がないため、
+        // NPEを防ぎつつそのままnullを返却して後続処理に委ねるための判定です。
         if (messages == null) {
             return null;
         }

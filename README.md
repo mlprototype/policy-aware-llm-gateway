@@ -3,7 +3,7 @@
 LLM / Agent 呼び出しを本番運用するための **運用統治レイヤー（Gateway）**。
 アプリケーションと LLM プロバイダの間に配置し、認証、プロバイダ抽象化、レート制御、可用性、安全性、監査性を一元的に扱う。
 
-> **ポートフォリオ第 3 弾** — 第 1 弾 [Retrieval品質管理システム](静的品質保証） / 第 2 弾 [Agentic Control Plane]（動的制御） に続く運用統治レイヤー。
+> **ポートフォリオ第 3 弾** <br/>第 1 弾 [Retrieval品質管理システム]（静的品質保証） / <br/>第 2 弾 [Agentic Control Plane]（動的制御） に続く運用統治レイヤー。
 
 ---
 ## Why
@@ -238,12 +238,12 @@ OpenAI Chat Completions API 互換エンドポイント。
 
 ### HTTP Semantics
 
-- `400 Bad Request`: invalid request format, OR security policy violation (PII/Injection blocked)
-- `401 Unauthorized`: missing or invalid API key
-- `403 Forbidden`: authenticated, but tenant is suspended
-- `429 Too Many Requests`: tenant rate limit exceeded
-- `502 Bad Gateway`: upstream provider 4xx / 5xx / invalid response
-- `503 Service Unavailable`: timeout / connection error / circuit breaker open
+- `400 Bad Request`: 無効なリクエスト形式、またはセキュリティポリシー違反（PII/インジェクションによるブロック）
+- `401 Unauthorized`: APIキーの欠落または無効
+- `403 Forbidden`: 認証済みだが、テナントが一時停止状態
+- `429 Too Many Requests`: テナントのレートリミット（利用上限）超過
+- `502 Bad Gateway`: アップストリーム（LLMプロバイダ）の 4xx / 5xx エラー、または無効なレスポンス
+- `503 Service Unavailable`: タイムアウト / 接続エラー / サーキットブレーカーのオープン状態
 
 ### Security & Policies
 

@@ -48,6 +48,12 @@ public class ApiKeyFilter extends OncePerRequestFilter {
         return path.startsWith("/actuator");
     }
 
+    /**
+     * APIキーを用いた認証を実行し、リクエストコンテキストを構築するフィルター処理関数です。
+     * HTTPリクエストからAPIキーを受け取り、AuthenticationServiceで検証を行います。
+     * 状態更新として、後続のコントローラーやフィルターで参照可能なようにRequestContextHolderおよびMDC（ログ用）にテナント情報をセットします。
+     * 認証に失敗した場合は、GatewayExceptionを捕捉してエラーレスポンスを直接書き込みます。
+     */
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,

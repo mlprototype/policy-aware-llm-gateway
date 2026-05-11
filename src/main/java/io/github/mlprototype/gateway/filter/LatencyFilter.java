@@ -24,6 +24,12 @@ public class LatencyFilter extends OncePerRequestFilter {
     public static final String LATENCY_HEADER = "X-Gateway-Latency-Ms";
     public static final String START_TIME_ATTR = "gateway.startTime";
 
+    /**
+     * リクエストの処理時間を計測し、レスポンスに記録するフィルター処理関数です。
+     * HTTPリクエストとレスポンスを受け取り、フィルターチェーンの前と後で時刻を取得して差分を算出します。
+     * 状態更新として、後続処理で開始時間を参照できるようにリクエスト属性に設定し、
+     * 処理完了後（正常・異常を問わず）にレスポンスヘッダーへレイテンシ（ミリ秒）を追加します。
+     */
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,

@@ -99,6 +99,7 @@ public class ChatCompletionController {
                             : null)
                     .model(response.getModel())
                     .latencyMs(latency)
+                    // 監査ログ上のステータスとして、ゲートウェイ自体の処理が正常に完了したことを示すために200(OK)を記録します。
                     .statusCode(200)
                     .status("success")
                     .promptTokens(response.getUsage() != null ? response.getUsage().getPromptTokens() : null)
@@ -116,6 +117,8 @@ public class ChatCompletionController {
 
             return ResponseEntity.ok(response);
         } catch (ProviderRoutingException exception) {
+            // プロバイダーへのリクエスト（フォールバック含む）が最終的に失敗した場合に、
+            // どのプロバイダーでどのようなエラーが発生したかの詳細を監査ログに記録するためここで捕捉します。
             long latency = System.currentTimeMillis() - startTime;
 
             auditLogger.log(AuditEvent.builder()

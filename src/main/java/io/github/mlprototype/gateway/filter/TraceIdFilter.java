@@ -30,6 +30,12 @@ public class TraceIdFilter extends OncePerRequestFilter {
     public static final String REQUEST_ID_HEADER = "X-Request-Id";
     public static final String MDC_TRACE_ID = "traceId";
 
+    /**
+     * リクエストにTrace IDを割り当て、ログや後続処理で利用可能な状態にするフィルター処理関数です。
+     * ヘッダーからTrace IDの候補を受け取り、必要に応じてIDを生成してフィルターチェーンを進めます。
+     * 状態更新として、MDC、Servletのリクエスト属性、およびクライアントへのレスポンスヘッダーにTrace IDを格納し、
+     * リクエスト終了時にはMDCから確実にクリアします。
+     */
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,

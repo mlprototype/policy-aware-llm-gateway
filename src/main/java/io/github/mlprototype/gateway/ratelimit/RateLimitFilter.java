@@ -55,7 +55,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         try {
             ctx = RequestContextHolder.getRequired();
         } catch (IllegalStateException e) {
-            // No context means auth filter rejected — just pass through
+            // 認証エラー等でコンテキストが存在しない場合、これ以上レートリミットを判定する意味がないため、
+            // 例外を無視してそのまま後続のフィルター（またはエラーレスポンス処理）へ流すための分岐です。
             filterChain.doFilter(request, response);
             return;
         }
@@ -98,4 +99,3 @@ public class RateLimitFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 }
-

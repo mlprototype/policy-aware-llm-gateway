@@ -37,6 +37,8 @@ public class CircuitBreakerProviderInvoker {
             gatewayMetrics.recordProviderRequestLatency(provider.getType().getValue(), "success", latency);
             return response;
         } catch (CallNotPermittedException exception) {
+            // サーキットブレーカーがOpen状態であり、外部APIを呼び出しても失敗する可能性が高いため、
+            // 呼び出しをスキップ（フェイルファスト）し、ルーティング層でのフォールバック処理を促すために例外を変換します。
             long latency = System.currentTimeMillis() - startTime;
             gatewayMetrics.recordProviderRequestLatency(provider.getType().getValue(), "error", latency);
             gatewayMetrics.incrementProviderFailure(provider.getType().getValue(), ProviderFailureType.BREAKER_OPEN.name());
@@ -59,4 +61,3 @@ public class CircuitBreakerProviderInvoker {
         }
     }
 }
-

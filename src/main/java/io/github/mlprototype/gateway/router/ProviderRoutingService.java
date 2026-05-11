@@ -32,6 +32,12 @@ public class ProviderRoutingService {
     private final CircuitBreakerProviderInvoker circuitBreakerProviderInvoker;
     private final GatewayMetrics gatewayMetrics;
 
+    /**
+     * プライマリプロバイダーへのリクエスト実行と、必要に応じたフォールバック処理を調整する関数です。
+     * リクエスト内容とヘッダー情報を受け取り、実行されたプロバイダー情報を含むProviderExecutionResultを返します。
+     * この関数自体は状態を持ちませんが、内部で呼び出すCircuitBreakerのメトリクスやGatewayMetricsを更新します。
+     * プロバイダー呼び出しに失敗した場合は、フォールバックが可能かどうかを判断し、不可能であれば例外をスローします。
+     */
     public ProviderExecutionResult execute(
             ChatRequest request,
             String requestedProviderHeader,

@@ -31,6 +31,8 @@ public class PiiDetector {
      * @return the result containing detected patterns
      */
     public PiiDetectionResult detect(List<Message> messages) {
+        // メッセージが空の場合はPIIも含まれないことが自明であるため、
+        // 正規表現のマッチング処理をスキップして効率的に結果（PIIなし）を返すための分岐です。
         if (messages == null || messages.isEmpty()) {
             return new PiiDetectionResult(false, List.of());
         }

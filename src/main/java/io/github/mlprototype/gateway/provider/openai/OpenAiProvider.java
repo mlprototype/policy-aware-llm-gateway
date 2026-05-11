@@ -58,6 +58,8 @@ public class OpenAiProvider implements LlmProvider {
                     })
                     .body(ChatResponse.class);
 
+            // 正常なHTTPステータス(200)であっても、ボディが空でデシリアライズできない場合は
+            // 後続処理でNullPointerExceptionを防ぐためにここで明示的にバリデーションを行います。
             if (response == null) {
                 throw failureClassifier.invalidResponse(ProviderType.OPENAI, "Empty response from openai", null);
             }

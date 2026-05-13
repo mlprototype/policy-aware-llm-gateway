@@ -10,6 +10,14 @@ spring:
       host: localhost
       port: 6379
 
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+  paths-to-match: /v1/**
+
 logging:
   level:
     io.github.mlprototype.gateway: DEBUG

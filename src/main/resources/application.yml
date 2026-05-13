@@ -30,6 +30,14 @@ management:
     health:
       show-details: when-authorized
 
+springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_API_DOCS_ENABLED:false}
+  swagger-ui:
+    enabled: ${SPRINGDOC_SWAGGER_UI_ENABLED:false}
+    path: /swagger-ui.html
+  paths-to-match: /v1/**
+
 resilience4j:
   circuitbreaker:
     configs:

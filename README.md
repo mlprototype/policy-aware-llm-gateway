@@ -50,14 +50,13 @@ graph TD
     F3 -.->|Validate and Fetch Context| Auth
     F4 -.->|Check Window| RL
     F4 -->|Authenticated and Allowed| Ctrl
-    Ctrl --> Security
-    Ctrl --> Router
-    Router --> Registry
-    Router --> CB
-    Registry --> OpenAI
-    Registry --> Anthropic
-    CB --> OpenAI
-    CB --> Anthropic
+    Ctrl -->|1. Evaluate PII and Injection| Security
+    Security -->|Pass or Mask| Ctrl
+    Ctrl -->|2. Route Request| Router
+    Router -.->|Lookup Provider| Registry
+    Router -->|Invoke with Breaker| CB
+    CB -->|provider.complete| OpenAI
+    CB -->|provider.complete| Anthropic
     OpenAI <-->|HTTPS| ExtO[(OpenAI API)]
     Anthropic <-->|HTTPS| ExtA[(Anthropic API)]
 
@@ -137,6 +136,10 @@ cp .env.example .env
 # === Gateway Authentication ===
 # DB投入済みの Dev API Key を使用 (V2_1__seed_dev_tenant.sql 参照)
 GATEWAY_API_KEY=dev-gateway-key-001
+
+# === Gateway Security Policy ===
+GATEWAY_PII_ACTION=MASK
+GATEWAY_INJECTION_ACTION=BLOCK
 
 # === LLM Provider ===
 OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxx        # OpenAI API Key
@@ -274,6 +277,8 @@ OpenAI Chat Completions API 互換エンドポイント。
 - **`MASK`**: (PII専用) リクエスト本文の該当文字列を `[EMAIL_REDACTED]` などにマスクして Provider へ送信。
 - **`BLOCK`**: 400 Bad Request で遮断。アップストリームへは送信しない。
 
+デフォルトでは PII は `MASK`、プロンプトインジェクションは `BLOCK` です。テナントの `pii_action` / `injection_action` が DB で設定されている場合は、テナント設定が優先されます。
+
 > **Note:** PII BLOCK の優先順位は最上位となります。同一リクエスト内で PII とインジェクションが検知された場合、PII のアクションが BLOCK であれば即時エラーとなります。
 
 ### Degraded Mode
@@ -316,6 +321,8 @@ src/main/java/io/github/mlprototype/gateway/
 | `gateway.provider.openai.default-model` | `gpt-4o-mini` | OpenAI デフォルトモデル |
 | `gateway.provider.anthropic.api-key` | env `ANTHROPIC_API_KEY` | Anthropic API Key |
 | `gateway.provider.anthropic.default-model` | `claude-3-haiku-20240307` | Anthropic デフォルトモデル |
+| `gateway.security.pii-action` | env `GATEWAY_PII_ACTION` / `MASK` | PII 検知時のデフォルトアクション |
+| `gateway.security.injection-action` | env `GATEWAY_INJECTION_ACTION` / `BLOCK` | プロンプトインジェクション検知時のデフォルトアクション |
 | `spring.data.redis.host` | `localhost` / `redis` | Redis host |
 | `spring.data.redis.port` | `6379` | Redis port |
 | `spring.threads.virtual.enabled` | `true` | Virtual Threads 有効化 |

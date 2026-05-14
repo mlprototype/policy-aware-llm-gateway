@@ -15,5 +15,5 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "gateway.security")
 public class SecurityPolicyProperties {
     private PiiAction piiAction = PiiAction.MASK;
-    private InjectionAction injectionAction = InjectionAction.WARN;
+    private InjectionAction injectionAction = InjectionAction.BLOCK;
 }

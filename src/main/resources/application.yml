@@ -62,6 +62,8 @@ resilience4j:
 gateway:
   security:
     api-key: ${GATEWAY_API_KEY:default-dev-key}
+    pii-action: ${GATEWAY_PII_ACTION:MASK}
+    injection-action: ${GATEWAY_INJECTION_ACTION:BLOCK}
   provider:
     default: openai
     openai:

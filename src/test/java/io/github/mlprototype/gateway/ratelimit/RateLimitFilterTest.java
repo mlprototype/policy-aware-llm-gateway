@@ -13,6 +13,8 @@ import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -91,5 +93,21 @@ class RateLimitFilterTest {
         // BUT headers should NOT be present
         assertThat(response.getHeader("X-RateLimit-Limit")).isNull();
         assertThat(response.getHeader("X-RateLimit-Remaining")).isNull();
+    }
+
+    @Test
+    void shouldNotFilter_openApiEndpoints_returnsTrue() {
+        for (String path : List.of(
+                "/swagger-ui.html",
+                "/swagger-ui/index.html",
+                "/swagger-ui/swagger-ui.css",
+                "/v3/api-docs",
+                "/v3/api-docs/swagger-config",
+                "/error")) {
+            var request = new MockHttpServletRequest();
+            request.setRequestURI(path);
+
+            assertThat(filter.shouldNotFilter(request)).isTrue();
+        }
     }
 }

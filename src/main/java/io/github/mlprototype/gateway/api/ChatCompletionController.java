@@ -7,12 +7,23 @@ import io.github.mlprototype.gateway.content.ContentSecurityService;
 import io.github.mlprototype.gateway.content.SecurityBlockException;
 import io.github.mlprototype.gateway.dto.ChatRequest;
 import io.github.mlprototype.gateway.dto.ChatResponse;
+import io.github.mlprototype.gateway.dto.ErrorResponse;
 import io.github.mlprototype.gateway.exception.ProviderRoutingException;
 import io.github.mlprototype.gateway.filter.TraceIdFilter;
 import io.github.mlprototype.gateway.router.ProviderExecutionResult;
 import io.github.mlprototype.gateway.router.ProviderRoutingService;
 import io.github.mlprototype.gateway.security.RequestContext;
 import io.github.mlprototype.gateway.security.RequestContextHolder;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -30,6 +41,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/v1")
 @RequiredArgsConstructor
+@Tag(name = "チャット補完", description = "OpenAI 互換のチャット補完エンドポイント")
 public class ChatCompletionController {
 
     private final ProviderRoutingService providerRoutingService;
@@ -37,11 +49,90 @@ public class ChatCompletionController {
     private final AuditLogger auditLogger;
 
     @PostMapping("/chat/completions")
+    @Operation(
+            summary = "チャット補完を作成する",
+            description = "日本語メッセージを含む OpenAI 互換リクエストを Gateway 経由でルーティングします。レスポンスヘッダーで trace、latency、provider routing、rate limit、fallback、security block の情報を確認できます。",
+            security = @SecurityRequirement(name = "gatewayApiKey"),
+            parameters = {
+                    @Parameter(
+                            name = TraceIdFilter.REQUEST_ID_HEADER,
+                            description = "任意のクライアント指定トレース ID。省略時は Gateway が生成します。",
+                            in = ParameterIn.HEADER
+                    )
+            },
+            requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    required = true,
+                    description = "OpenAI 互換のチャット補完リクエスト。content には日本語をそのまま指定できます。",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = ChatRequest.class),
+                            examples = @ExampleObject(
+                                    name = "日本語リクエスト",
+                                    value = """
+                                            {
+                                              "model": "gpt-4o-mini",
+                                              "messages": [
+                                                {"role": "system", "content": "あなたは日本語で簡潔に回答するアシスタントです。"},
+                                                {"role": "user", "content": "こんにちは。今日の作業を一言で励ましてください。"}
+                                              ],
+                                              "temperature": 0.7,
+                                              "max_tokens": 1024
+                                            }
+                                            """
+                            )
+                    )
+            )
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "チャット補完の生成に成功",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = ChatResponse.class))
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "リクエスト形式が不正、またはセキュリティポリシーによりブロック",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))
+            ),
+            @ApiResponse(
+                    responseCode = "401",
+                    description = "API Key が未指定、または不正",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403",
+                    description = "認証済みだが Gateway の利用が許可されていない",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))
+            ),
+            @ApiResponse(
+                    responseCode = "429",
+                    description = "レートリミット超過",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))
+            ),
+            @ApiResponse(
+                    responseCode = "502",
+                    description = "プロバイダの upstream エラー、または不正なレスポンス",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))
+            ),
+            @ApiResponse(
+                    responseCode = "503",
+                    description = "プロバイダ利用不可、タイムアウト、または Circuit Breaker open",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))
+            )
+    })
     public ResponseEntity<ChatResponse> createChatCompletion(
             @Valid @RequestBody ChatRequest request,
+            @Parameter(
+                    name = GatewayHeaders.REQUESTED_PROVIDER_HEADER,
+                    description = "利用したいプロバイダ。指定可能な値: openai, anthropic。省略時は Gateway のデフォルト設定を使用します。",
+                    in = ParameterIn.HEADER
+            )
             @RequestHeader(value = GatewayHeaders.REQUESTED_PROVIDER_HEADER, required = false) String requestedProviderHeader,
+            @Parameter(hidden = true)
             @RequestHeader(value = GatewayHeaders.PROVIDER_HEADER, required = false) String legacyProviderHeader,
+            @Parameter(hidden = true)
             HttpServletRequest httpRequest,
+            @Parameter(hidden = true)
             HttpServletResponse httpResponse) {
 
         RequestContext ctx = RequestContextHolder.getRequired();

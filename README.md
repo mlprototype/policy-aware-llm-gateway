@@ -50,14 +50,13 @@ graph TD
     F3 -.->|Validate and Fetch Context| Auth
     F4 -.->|Check Window| RL
     F4 -->|Authenticated and Allowed| Ctrl
-    Ctrl --> Security
-    Ctrl --> Router
-    Router --> Registry
-    Router --> CB
-    Registry --> OpenAI
-    Registry --> Anthropic
-    CB --> OpenAI
-    CB --> Anthropic
+    Ctrl -->|1. Evaluate PII and Injection| Security
+    Security -->|Pass or Mask| Ctrl
+    Ctrl -->|2. Route Request| Router
+    Router -.->|Lookup Provider| Registry
+    Router -->|Invoke with Breaker| CB
+    CB -->|provider.complete| OpenAI
+    CB -->|provider.complete| Anthropic
     OpenAI <-->|HTTPS| ExtO[(OpenAI API)]
     Anthropic <-->|HTTPS| ExtA[(Anthropic API)]
 
@@ -91,6 +90,7 @@ graph TD
 | レートリミット (Sprint 2) | Redis Fixed-Window | Fail-open 設計 (Redis 障害時でもリクエストをブロックしない)。Retry-After は現状 60 秒固定 (将来 window 残り時間へ改善可能)。 |
 | 可用性戦略 (Sprint 3) | controlled degradation | timeout / 5xx / breaker-open 時に single-step fallback を許可し、provider 4xx や invalid response は隠蔽しすぎない。 |
 | セキュリティ監査 (Sprint 4) | ContentSecurityService + Async AuditDB | PIIマスキングやインジェクション検知をルーティング前に実施。監査ログ保存はDBダウン時にもメインフローを止めない Fail-open 設計。テナントごとのポリシー(BLOCK, MASK, WARN)を動的に適用。 |
+| APIドキュメント | springdoc-openapi / Swagger UI | curl だけに依存せず、local/dev 環境で API 仕様と試行導線を提供。本番では Swagger UI を無効化する想定。 |
 | ビルドツール | Gradle (Groovy DSL) | Spring Boot 標準、CI キャッシュ親和性 |
 ---
 
@@ -107,6 +107,7 @@ graph TD
 | Cache | Redis 7 |
 | Logging | Logback + logstash-logback-encoder (structured JSON) |
 | Resilience | Resilience4j (Circuit Breaker) |
+| API Docs | springdoc-openapi / Swagger UI |
 | Build | Gradle 8.14 |
 | Container | Docker Compose |
 | CI | GitHub Actions |
@@ -136,6 +137,10 @@ cp .env.example .env
 # DB投入済みの Dev API Key を使用 (V2_1__seed_dev_tenant.sql 参照)
 GATEWAY_API_KEY=dev-gateway-key-001
 
+# === Gateway Security Policy ===
+GATEWAY_PII_ACTION=MASK
+GATEWAY_INJECTION_ACTION=BLOCK
+
 # === LLM Provider ===
 OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxx        # OpenAI API Key
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxx   # Anthropic API Key
@@ -160,17 +165,17 @@ curl -s http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $GATEWAY_API_KEY" \
   -d '{
-    "messages": [{"role": "user", "content": "Say hello in one word"}],
+    "messages": [{"role": "user", "content": "日本語で一言あいさつしてください"}],
     "max_tokens": 10
   }' | jq .
 
 # → {"id":"chatcmpl-...","model":"gpt-4o-mini-2024-07-18",
-#    "choices":[{"message":{"content":"Hello!"}}]}
+#    "choices":[{"message":{"content":"こんにちは！"}}]}
 
 # ❌ Auth Failure — API Key なし
 curl -s http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"messages": [{"role": "user", "content": "Hello"}]}' | jq .
+  -d '{"messages": [{"role": "user", "content": "こんにちは"}]}' | jq .
 
 # → {"status":401,"error":"Unauthorized","message":"Invalid or missing API key",
 #    "trace_id":"..."}
@@ -201,6 +206,24 @@ PostgreSQL and Redis must be running locally before starting the application.
 SPRING_PROFILES_ACTIVE=local ./gradlew bootRun
 ```
 
+### Swagger UI (local/dev)
+
+Swagger UI は local/dev 環境で有効化する想定です。`local` profile ではデフォルトで有効になり、以下の URL から OpenAPI ドキュメントを確認できます。
+
+- Swagger UI: `http://localhost:8080/swagger-ui.html`
+- OpenAPI JSON: `http://localhost:8080/v3/api-docs`
+
+Docker やデモ用途で `local` profile を使わずに有効化したい場合は、環境変数で切り替えられます。
+
+```bash
+SPRINGDOC_API_DOCS_ENABLED=true
+SPRINGDOC_SWAGGER_UI_ENABLED=true
+```
+
+Swagger UI の `Try it out` はモックではなく、実際に `/v1/chat/completions` を呼び出します。そのため、通常の API 呼び出しと同じく `X-API-Key` が必要で、実際に LLM Provider へリクエストが送信されます。
+
+Swagger UI / OpenAPI endpoint はドキュメント閲覧のため認証・RateLimit の対象外にしていますが、実 API の認証・RateLimit・Security・Audit の挙動は変更していません。本番環境では `SPRINGDOC_API_DOCS_ENABLED=false`, `SPRINGDOC_SWAGGER_UI_ENABLED=false` のまま運用し、Swagger UI を無効化する想定です。
+
 ---
 
 ## API Reference
@@ -224,8 +247,8 @@ OpenAI Chat Completions API 互換エンドポイント。
 {
   "model": "gpt-4o-mini",
   "messages": [
-    {"role": "system", "content": "You are helpful."},
-    {"role": "user", "content": "Hello!"}
+    {"role": "system", "content": "あなたは日本語で簡潔に回答するアシスタントです。"},
+    {"role": "user", "content": "こんにちは。今日の作業を一言で励ましてください。"}
   ],
   "temperature": 0.7,
   "max_tokens": 1024
@@ -253,6 +276,8 @@ OpenAI Chat Completions API 互換エンドポイント。
 - **`WARN`**: リクエストは通過するが、監査ログに検知フラグを立てて記録。
 - **`MASK`**: (PII専用) リクエスト本文の該当文字列を `[EMAIL_REDACTED]` などにマスクして Provider へ送信。
 - **`BLOCK`**: 400 Bad Request で遮断。アップストリームへは送信しない。
+
+デフォルトでは PII は `MASK`、プロンプトインジェクションは `BLOCK` です。テナントの `pii_action` / `injection_action` が DB で設定されている場合は、テナント設定が優先されます。
 
 > **Note:** PII BLOCK の優先順位は最上位となります。同一リクエスト内で PII とインジェクションが検知された場合、PII のアクションが BLOCK であれば即時エラーとなります。
 
@@ -296,9 +321,15 @@ src/main/java/io/github/mlprototype/gateway/
 | `gateway.provider.openai.default-model` | `gpt-4o-mini` | OpenAI デフォルトモデル |
 | `gateway.provider.anthropic.api-key` | env `ANTHROPIC_API_KEY` | Anthropic API Key |
 | `gateway.provider.anthropic.default-model` | `claude-3-haiku-20240307` | Anthropic デフォルトモデル |
+| `gateway.security.pii-action` | env `GATEWAY_PII_ACTION` / `MASK` | PII 検知時のデフォルトアクション |
+| `gateway.security.injection-action` | env `GATEWAY_INJECTION_ACTION` / `BLOCK` | プロンプトインジェクション検知時のデフォルトアクション |
 | `spring.data.redis.host` | `localhost` / `redis` | Redis host |
 | `spring.data.redis.port` | `6379` | Redis port |
 | `spring.threads.virtual.enabled` | `true` | Virtual Threads 有効化 |
+| `springdoc.api-docs.enabled` | env `SPRINGDOC_API_DOCS_ENABLED` / `false` | OpenAPI JSON endpoint (`/v3/api-docs`) の有効化 |
+| `springdoc.swagger-ui.enabled` | env `SPRINGDOC_SWAGGER_UI_ENABLED` / `false` | Swagger UI (`/swagger-ui.html`) の有効化 |
+| `springdoc.swagger-ui.path` | `/swagger-ui.html` | Swagger UI の公開パス |
+| `springdoc.paths-to-match` | `/v1/**` | OpenAPI ドキュメント対象の API path |
 
 ---
 
@@ -316,34 +347,34 @@ source .env
 curl -s http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $GATEWAY_API_KEY" \
-  -d '{"messages":[{"role":"user","content":"ping"}],"max_tokens":5}'
+  -d '{"messages":[{"role":"user","content":"日本語で一言あいさつしてください"}],"max_tokens":10}'
 
 # 2. Anthropic
 curl -s http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $GATEWAY_API_KEY" \
   -H "X-Gateway-Requested-Provider: anthropic" \
-  -d '{"messages":[{"role":"user","content":"What is 2+2? Keep it short."}],"max_tokens":10}'
+  -d '{"messages":[{"role":"user","content":"2+2はいくつですか。日本語で短く答えてください。"}],"max_tokens":10}'
 
 # 3. Suspended tenant (403)
 curl -s http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "X-API-Key: suspended-key-001" \
-  -d '{"messages":[{"role":"user","content":"Hello"}]}'
+  -d '{"messages":[{"role":"user","content":"こんにちは"}]}'
 
 # 4. Rate limit exceeded (429)
 for i in {1..5}; do
   curl -i -s http://localhost:8080/v1/chat/completions \
     -H "Content-Type: application/json" \
     -H "X-API-Key: $GATEWAY_API_KEY" \
-    -d '{"messages":[{"role":"user","content":"ping"}],"max_tokens":5}'
+    -d '{"messages":[{"role":"user","content":"疎通確認です"}],"max_tokens":5}'
 done
 
 # 5. PII blocked request (400)
 curl -i -s http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $GATEWAY_API_KEY" \
-  -d '{"messages":[{"role":"user","content":"My email is user@example.com"}],"max_tokens":5}'
+  -d '{"messages":[{"role":"user","content":"私のメールアドレスは user@example.com です"}],"max_tokens":5}'
 ```
 
 ---
@@ -373,6 +404,7 @@ Sprint 5 までで実装済み:
 - **Content Security**: PII検知/マスキング、プロンプトインジェクション検知、テナントレベルのポリシーエンジン
 - **Persistent Audit Log**: リクエストのハッシュ、サニタイズされたプレビュー、使用トークン、レイテンシを DB へ非同期保存（Fail-open 設計）
 - **Observability**: Prometheus と Grafana を使用した、RPS、レイテンシ、エラー内訳、フォールバック、セキュリティブロックの可視化ダッシュボード
+- **Swagger UI / OpenAPI**: local/dev 環境で `/swagger-ui.html` を提供し、API Key 認証付きで実 API を試行可能
 
 ---
 

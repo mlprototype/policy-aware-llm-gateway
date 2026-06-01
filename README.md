@@ -1,22 +1,39 @@
 # Policy-Aware Multi-LLM Gateway
 
-LLM / Agent 呼び出しを本番運用するための **運用統治レイヤー（Gateway）**。
+> LLM / Agent呼び出しを本番運用するための運用統治レイヤー（Gateway）
+
 アプリケーションと LLM プロバイダの間に配置し、認証、プロバイダ抽象化、レート制御、可用性、安全性、監査性を一元的に扱う。
 
-> **ポートフォリオ第 3 弾** <br/>第 1 弾 [Retrieval品質管理システム]（静的品質保証） / <br/>第 2 弾 [Agentic Control Plane]（動的制御） に続く運用統治レイヤー。
+---
+
+## ポートフォリオ内での位置づけ
+
+本リポジトリは、生成AIを業務システムへ安全に導入するための
+「品質保証 × 動的制御 × 運用統治」3層構成のポートフォリオの
+**第3弾「運用統治」** に位置づけられます。
+
+| 位置 | リポジトリ | レイヤー |
+|---|---|---|
+| 第1弾 | [Retrieval品質管理システム](https://github.com/mlprototype/spec-rag-qa) | 品質保証 |
+| 第2弾 | [Agentic RAG with Control Plane](https://github.com/mlprototype/ai-agent-rag) | 動的制御 |
+| **第3弾** | **本リポジトリ（Policy-Aware Multi-LLM Gateway）** | **運用統治** |
 
 ---
-## Why
+
+## 解決する課題
 
 LLM/Agent を本番で運用する際、コスト暴走・プロバイダ障害・PII 流出・監査要件
-への対応が必要になる。本プロジェクトは、これらを横断的に統治する Gateway 層を、
+への対応が必要になる。
+
+## システム概要
+
+本プロジェクトは、これらを横断的に統治する Gateway 層を、
 Spring Boot / Flyway / Redis / structured logging を土台に段階的に実装する設計探索である。
 単に AI を呼び出せるだけでなく、安全に使え、障害時に劣化運転でき、後から追跡できることを重視している。
 
 ---
 
-
-## Architecture
+## アーキテクチャ
 
 ```mermaid
 graph TD
@@ -79,7 +96,7 @@ graph TD
 
 ---
 
-## Design Decisions
+## 設計思想
 
 | 判断 | 選定 | Why |
 |:---|:---|:---|
@@ -94,8 +111,7 @@ graph TD
 | ビルドツール | Gradle (Groovy DSL) | Spring Boot 標準、CI キャッシュ親和性 |
 ---
 
-
-## Tech Stack
+## 技術スタック
 
 | Component | Technology |
 |:---|:---|
@@ -188,7 +204,7 @@ curl -s http://localhost:8080/actuator/health | jq .
 
 ### 4. Observability Dashboard
 
-Sprint 5 より、Prometheus と Grafana を使った可視化が追加されました。
+Sprint 5 より、Prometheus と Grafana を使った可観測性が追加されました。
 
 1. `docker compose up -d` 実行後、数十秒〜1分程度待機します（Prometheus がメトリクスを収集し、Grafana がダッシュボードをプロビジョニングするため）。
 2. ブラウザで Grafana (`http://localhost:3000`) にアクセスします。
@@ -290,7 +306,7 @@ OpenAI Chat Completions API 互換エンドポイント。
 
 ---
 
-## Project Structure
+## ディレクトリ構成
 
 ```text
 src/main/java/io/github/mlprototype/gateway/
@@ -403,20 +419,29 @@ Sprint 5 までで実装済み:
 - **Degraded mode visibility**: requested/resolved provider と fallback 使用有無を response header / structured audit log に出力
 - **Content Security**: PII検知/マスキング、プロンプトインジェクション検知、テナントレベルのポリシーエンジン
 - **Persistent Audit Log**: リクエストのハッシュ、サニタイズされたプレビュー、使用トークン、レイテンシを DB へ非同期保存（Fail-open 設計）
-- **Observability**: Prometheus と Grafana を使用した、RPS、レイテンシ、エラー内訳、フォールバック、セキュリティブロックの可視化ダッシュボード
+- **Observability**: Prometheus と Grafana を使用した、RPS、レイテンシ、エラー内訳、フォールバック、セキュリティブロックの可観測性ダッシュボード
 - **Swagger UI / OpenAPI**: local/dev 環境で `/swagger-ui.html` を提供し、API Key 認証付きで実 API を試行可能
 
 ---
 
-## Known Limitations
+## 既知の制限
 
-- **PIIおよびプロンプトインジェクションの検知**: ルールベースの実装であるため、誤検知（False Positive）や検知漏れ（False Negative）が発生する可能性あり。
-- **レスポンス側のリダクション**: 出力内容に対する情報の秘匿化（リダクション）は未実装。
-- **監査ログの永続化**: フェイルオープンかつ非同期で動作。現時点では、厳密な配信保証（Strong Delivery Guarantees）はスコープ外。
-- **APIキーのハッシュ化**: 現在の実装では、より強固なシークレット管理メカニズムよりも、決定論的な検索（Lookup）の簡便性を優先している。
-- **フォールバックルーティング**: シングルステップのみの対応であり、コストやレイテンシを考慮したルーティングは含まれていない。
+| 分類 | 制約事項 |
+| :--- | :--- |
+| **Security** | ルールベースの実装であるため、PIIやプロンプトインジェクションの誤検知（False Positive）や検知漏れ（False Negative）が発生する可能性あり |
+| **Security** | 出力（レスポンス）側に対する情報の秘匿化（リダクション）は未実装 |
+| **Audit Log** | フェイルオープンかつ非同期で動作。現時点では、厳密な配信保証（Strong Delivery Guarantees）はスコープ外 |
+| **Authentication** | APIキーはDBにSHA-256ハッシュで保存。より強固なシークレット管理メカニズムよりも、決定論的な検索（Lookup）の簡便性を優先している |
+| **Routing** | シングルステップのみのフォールバック対応であり、コストやレイテンシを考慮した高度なルーティングは含まれていない |
 
-## License
+---
 
-This repository is published for portfolio purposes only.
-Reuse or redistribution is not permitted without prior permission.
+## 今後の展望
+
+以下は現時点で未実装だが、次のフェーズでの対応を検討している改善候補です。
+
+- **AIベースのPII・プロンプトインジェクション検知**: ルールベースの検知から、軽量なローカルLLMや専用のGuardrailsモデルを用いた、コンテキスト依存の高度な検知への移行。
+- **レスポンス側の出力リダクション**: リクエスト内容だけでなく、LLMからのレスポンスに含まれるPIIや不適切な表現をリアルタイムで検知・マスキングする機能の追加。
+- **高信頼性監査ログの配信保証**: Fail-open設計の非同期ログ保存に加え、メッセージキュー（KafkaやRabbitMQ等）を導入し、厳密なログの配信保証（At-least-once）とトレーサビリティの向上を実現。
+- **ダイナミックかつインテリジェントなルーティング**: 静的なシングルステップ・フォールバックだけでなく、プロバイダーのリアルタイムなレイテンシ、コスト、エラー率、レートリミット上限を学習し、動的に最適なLLMルートを選択するインテリジェントルーティングの実装。
+- **シークレット管理の統合**: APIキーのハッシュ化によるインメモリDB管理から、HashiCorp VaultやクラウドのSecret Manager（AWS, GCP等）と統合した、より堅牢でスケーラブルな鍵管理。

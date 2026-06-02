@@ -31,6 +31,24 @@ LLM/Agent を本番で運用する際、コスト暴走・プロバイダ障害�
 Spring Boot / Flyway / Redis / structured logging を土台に段階的に実装する設計探索である。
 単に AI を呼び出せるだけでなく、安全に使え、障害時に劣化運転でき、後から追跡できることを重視している。
 
+## 想定ユースケース
+
+#### 複数業務アプリからのLLM利用を安全に統制するGateway
+
+複数の業務システムやAIアプリケーションが、社内共通のLLM Gateway経由でLLM APIを利用するケースを想定。
+
+各アプリケーションが個別にLLM APIを直接呼び出すと、以下の課題が発生する。
+
+- APIキー管理がアプリごとに分散する
+- テナントやプロジェクト単位の利用制御が難しい
+- Rate Limitやコスト制御が統一できない
+- LLMプロバイダー障害時のFallbackが各アプリ実装になる
+- PII検知やプロンプトインジェクション対策が分散する
+- 監査ログやメトリクスが統一されない
+- 運用・監視・セキュリティポリシーがアプリごとにばらつく
+
+このシステムでは、Spring Boot 3でLLM Gatewayを構築し、LLM利用時の非機能要件をGateway側に分離・共通化する。
+
 ---
 
 ## アーキテクチャ
@@ -253,9 +271,9 @@ OpenAI Chat Completions API 互換エンドポイント。
 | Header | Required | Description |
 |:---|:---|:---|
 | `X-API-Key` | ✅ | Gateway 認証キー (DBのテナントと紐付け) |
-| `X-Gateway-Requested-Provider` | ❌ | 使用プロバイダの**要求値** (`openai` または `anthropic` / default: `openai`) |
-| `X-Gateway-Provider` | ❌ | request では legacy alias。response では**実解決値**を返す |
-| `X-Request-Id` | ❌ | クライアント指定のトレース ID |
+| `X-Gateway-Requested-Provider` | - | 使用プロバイダの**要求値** (`openai` または `anthropic` / default: `openai`) |
+| `X-Gateway-Provider` | - | request では legacy alias。response では**実解決値**を返す |
+| `X-Request-Id` | - | クライアント指定のトレース ID |
 
 **Request Body:**
 
@@ -327,25 +345,23 @@ src/main/java/io/github/mlprototype/gateway/
 
 ---
 
-## Configuration
+## 設定
 
-主要な設定値 (`application.yml`):
+本システムでは、LLM APIキー、Gateway用APIキー、コンテンツセキュリティポリシー、PostgreSQL接続、Redis接続、Resilience4j Circuit Breaker、Swagger UIなどの設定を環境変数や設定ファイル（`application.yml`）で管理しています。
 
-| Property | Default | Description |
-|:---|:---|:---|
-| `gateway.provider.openai.api-key` | env `OPENAI_API_KEY` | OpenAI API Key |
-| `gateway.provider.openai.default-model` | `gpt-4o-mini` | OpenAI デフォルトモデル |
-| `gateway.provider.anthropic.api-key` | env `ANTHROPIC_API_KEY` | Anthropic API Key |
-| `gateway.provider.anthropic.default-model` | `claude-3-haiku-20240307` | Anthropic デフォルトモデル |
-| `gateway.security.pii-action` | env `GATEWAY_PII_ACTION` / `MASK` | PII 検知時のデフォルトアクション |
-| `gateway.security.injection-action` | env `GATEWAY_INJECTION_ACTION` / `BLOCK` | プロンプトインジェクション検知時のデフォルトアクション |
-| `spring.data.redis.host` | `localhost` / `redis` | Redis host |
-| `spring.data.redis.port` | `6379` | Redis port |
-| `spring.threads.virtual.enabled` | `true` | Virtual Threads 有効化 |
-| `springdoc.api-docs.enabled` | env `SPRINGDOC_API_DOCS_ENABLED` / `false` | OpenAPI JSON endpoint (`/v3/api-docs`) の有効化 |
-| `springdoc.swagger-ui.enabled` | env `SPRINGDOC_SWAGGER_UI_ENABLED` / `false` | Swagger UI (`/swagger-ui.html`) の有効化 |
-| `springdoc.swagger-ui.path` | `/swagger-ui.html` | Swagger UI の公開パス |
-| `springdoc.paths-to-match` | `/v1/**` | OpenAPI ドキュメント対象の API path |
+主要な設定カテゴリは以下です。
+
+| カテゴリ | 主な設定内容 |
+| :--- | :--- |
+| LLM Provider | OpenAI / Anthropic APIキー、デフォルトモデル、タイムアウト秒数、最大トークン制限 |
+| Content Security | PII検知・プロンプトインジェクション検知時のデフォルトアクション制御（BLOCK / MASK / WARN / ALLOW） |
+| Database / Cache | PostgreSQL接続（テナント管理・非同期監査ログ永続化用）、Redis接続（テナント別レートリミット用） |
+| Resilience | Resilience4j Circuit Breaker設定（判定用スライディングウィンドウ、失敗閾値、除外例外など）とフォールバック制御 |
+| Observability / API Docs | Actuator/Prometheus連携（メトリクス公開）、JSON構造化ログ、Swagger UI / OpenAPIの有効化 |
+
+詳細な環境変数一覧とデフォルト値は [`docs/configuration.md`](docs/configuration.md) を参照してください。
+
+各デフォルト値は個人開発・検証環境向けの初期値であり、本番利用時は対象データ、レイテンシ要件、APIコスト、評価結果に応じて調整する想定です。
 
 ---
 

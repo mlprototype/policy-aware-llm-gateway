@@ -72,11 +72,17 @@ public class ChatCompletionController {
                                             {
                                               "model": "gpt-4o-mini",
                                               "messages": [
-                                                {"role": "system", "content": "あなたは日本語で簡潔に回答するアシスタントです。"},
-                                                {"role": "user", "content": "こんにちは。今日の作業を一言で励ましてください。"}
+                                                {
+                                                  "role": "system",
+                                                  "content": "あなたは優秀なカスタマーサポートアシスタントです。ユーザーからの問い合わせ内容を分析し、対応優先度（高/中/低）と要約を簡潔な日本語で出力してください。"
+                                                },
+                                                {
+                                                  "role": "user",
+                                                  "content": "【問い合わせ内容】システム移行後から管理画面にログインできなくなりました。「認証エラー」と表示されます。業務への影響が大きいため、至急原因と対策をご連絡ください。"
+                                                }
                                               ],
-                                              "temperature": 0.7,
-                                              "max_tokens": 1024
+                                              "temperature": 0.2,
+                                              "max_tokens": 512
                                             }
                                             """
                             )

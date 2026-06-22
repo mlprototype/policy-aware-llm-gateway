@@ -1,0 +1,33 @@
+# ==============================================================================
+# Multi-LLM Gateway Terraform 変数設定例 (tfvars)
+# ==============================================================================
+# このファイルを 'terraform.tfvars' にコピーし、お使いのAWS環境の値に書き換えてください。
+# ==============================================================================
+
+# 1. ネットワーク環境設定（既存のVPC/サブネットIDを設定）
+# ※既存のデフォルトVPCなどの値を指定することで、新規NAT Gateway等の固定費を回避します。
+vpc_id            = "vpc-0123456789abcdef0"
+public_subnet_ids = [
+  "subnet-0123456789abcdef0",
+  "subnet-0123456789abcdef1"
+]
+
+# 2. セキュリティ設定 (検証元マシンのグローバルIPのみに接続制限します)
+# ※セキュリティのため、絶対空欄のまま、または "0.0.0.0/0" にせず、ご自身のIPを指定してください。
+allowed_ingress_cidr = ["203.0.113.1/32"]
+
+# 3. ECSコンテナ配置設定
+# container_image = "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/multi-llm-gateway-repo:latest"
+container_port  = 8080
+
+# 4. 常時非稼働コストコントロール (デフォルト)
+desired_count          = 0      # 結合検証時のみ 1 にスケールアップして使用します
+enable_alb             = false  # ALBを作成しない場合はECSタスクのパブリックIPへ直接接続します
+enable_rds             = false  # RDS PostgreSQLを非作成（H2等のインメモリ検証用）
+enable_redis           = false  # ElastiCache Redisを非作成（Rate Limitは自動でFail-openになります）
+enable_secrets_manager = true   # 1つのJSONシークレットで鍵情報を管理（セキュリティベストプラクティス）
+
+# 5. コスト削減用パラメータ
+log_retention_in_days     = 1  # ログ保持期間（最短1日）
+ecr_image_retention_count = 3  # ECRイメージ保管世代（最新3件のみ）
+enable_dashboard          = true # CloudWatchの無料枠内でダッシュボードをプロビジョニング

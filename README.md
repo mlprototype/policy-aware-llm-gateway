@@ -281,11 +281,17 @@ OpenAI Chat Completions API 互換エンドポイント。
 {
   "model": "gpt-4o-mini",
   "messages": [
-    {"role": "system", "content": "あなたは日本語で簡潔に回答するアシスタントです。"},
-    {"role": "user", "content": "こんにちは。今日の作業を一言で励ましてください。"}
+    {
+      "role": "system",
+      "content": "あなたは優秀なカスタマーサポートアシスタントです。ユーザーからの問い合わせ内容を分析し、対応優先度（高/中/低）と要約を簡潔な日本語で出力してください。"
+    },
+    {
+      "role": "user",
+      "content": "【問い合わせ内容】システム移行後から管理画面にログインできなくなりました。「認証エラー」と表示されます。業務への影響が大きいため、至急原因と対策をご連絡ください。"
+    }
   ],
-  "temperature": 0.7,
-  "max_tokens": 1024
+  "temperature": 0.2,
+  "max_tokens": 512
 }
 ```
 
@@ -362,6 +368,36 @@ src/main/java/io/github/mlprototype/gateway/
 詳細な環境変数一覧とデフォルト値は [`docs/configuration.md`](docs/configuration.md) を参照してください。
 
 各デフォルト値は個人開発・検証環境向けの初期値であり、本番利用時は対象データ、レイテンシ要件、APIコスト、評価結果に応じて調整する想定です。
+
+---
+
+## AWS Deployment & Cost Strategy
+
+This project includes a fully defined **Infrastructure as Code (IaC)** design using Terraform under [infra/aws/](file:///Users/apple/develop/policy-aware-llm-gateway/infra/aws/).
+
+To balance enterprise production standards with personal development budgets, the architecture is designed around a **Zero-Idle & Cost-Aware Architecture (FinOps-friendly)**.
+
+### Architectural Features & Cost Controls
+- **Zero-Idle Task Policy**: The ECS Fargate service defaults to `desired_count = 0` to prevent ongoing CPU/Memory runtime charges when not testing.
+- **Toggleable Expensive Components**: Managed services like **Application Load Balancers (ALB)**, **RDS PostgreSQL**, and **ElastiCache Redis** are disabled by default via Terraform variables (`enable_alb = false`, etc.).
+- **NAT Gateway-less Architecture**: To avoid baseline NAT Gateway costs, ECS tasks are deployed on public subnets with direct public IP mapping, allowing direct outbound connection to OpenAI / Anthropic APIs (limited to short-term verification).
+- **JSON Consolidated Secret**: Consolidates multiple API keys into a single JSON secret in **AWS Secrets Manager** to minimize billing to a single secret fee (approx. $0.40/month), contrasting with a production-ready decoupled secret architecture.
+- **Secure CI/CD Workflow**: Integrates a GitHub Actions workflow using **OIDC (OpenID Connect)** authentication, utilizing Buildx layer caching, and executing non-blocking service updates to avoid runner timeout billing.
+- **Cost-Free CloudWatch Dashboard**: Includes a single CloudWatch Dashboard ([infra/aws/dashboard.tf](file:///Users/apple/develop/policy-aware-llm-gateway/infra/aws/dashboard.tf)) capturing CPU/Memory usage, running task counts, and Log Insights without custom metric fees.
+
+### CI/CD Quality Gates and Rollback
+
+`main` へのデプロイワークフローは、次の順序で実行します。`./gradlew test` が成功するまで Docker build、ECR push、ECS 更新へ進みません。
+
+1. PostgreSQL / Redis を使った `./gradlew test`
+2. `terraform fmt -check`、`terraform validate`、OIDC 認証後の `terraform plan`
+3. イミュータブルな Git SHA タグの ECR push と ECS タスク定義更新
+4. ECS Exec によりタスク内の `/actuator/health` を smoke test
+5. 成功時は元の `desired_count` へ戻し、失敗時は直前のタスク定義と起動数へ自動ロールバック
+
+ECS Exec を使うため、CI ランナーの IP を Security Group へ一時的に開放しません。実行前に RDS を有効化した検証環境と、GitHub Actions 用の OIDC ロール・Variables を設定してください。具体的な設定は [AWS Deployment Guide](docs/AWS_DEPLOYMENT.md#14-github-actions-cicd) を参照してください。
+
+For detailed design decisions and cost breakdowns, see [docs/AWS_COST_STRATEGY.md](file:///Users/apple/develop/policy-aware-llm-gateway/docs/AWS_COST_STRATEGY.md).
 
 ---
 

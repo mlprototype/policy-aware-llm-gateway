@@ -1,0 +1,231 @@
+name: Test, Plan, Deploy and Smoke Test on AWS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'infra/aws/**'
+      - 'Dockerfile'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'gradle/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+# 同一環境へ並行デプロイしてロールバック対象を取り違えないよう直列化する。
+concurrency:
+  group: aws-ecs-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # AWS OIDC 連携に必須
+
+env:
+  AWS_REGION: ap-northeast-1
+  AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+  ECR_REPOSITORY: multi-llm-gateway-repo
+  ECS_SERVICE: multi-llm-gateway-service
+  ECS_CLUSTER: multi-llm-gateway-cluster
+  ECS_TASK_DEFINITION_NAME: multi-llm-gateway
+
+jobs:
+  test:
+    name: Unit and integration tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: gateway_test
+          POSTGRES_USER: gateway
+          POSTGRES_PASSWORD: gateway_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - name: Grant execute permission for Gradle Wrapper
+        run: chmod +x gradlew
+      - name: Run test suite
+        run: ./gradlew test
+        env:
+          SPRING_PROFILES_ACTIVE: test
+          OPENAI_API_KEY: sk-test-dummy
+          GATEWAY_API_KEY: test-gateway-key
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-test-report
+          path: build/reports/tests/
+
+  terraform:
+    name: Terraform format, validate and plan
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.5.0'
+      - name: Check Terraform formatting
+        working-directory: infra/aws
+        run: terraform fmt -check -recursive
+      - name: Initialize Terraform without state backend
+        working-directory: infra/aws
+        run: terraform init -backend=false -input=false
+      - name: Validate Terraform configuration
+        working-directory: infra/aws
+        run: terraform validate
+      - name: Configure AWS credentials for Terraform plan
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Require Terraform plan inputs
+        env:
+          AWS_VPC_ID: ${{ vars.AWS_VPC_ID }}
+          AWS_PUBLIC_SUBNET_IDS: ${{ vars.AWS_PUBLIC_SUBNET_IDS }}
+        run: |
+          test -n "$AWS_VPC_ID" || { echo 'GitHub Variable AWS_VPC_ID is required.' >&2; exit 1; }
+          test -n "$AWS_PUBLIC_SUBNET_IDS" || { echo 'GitHub Variable AWS_PUBLIC_SUBNET_IDS is required.' >&2; exit 1; }
+      - name: Create Terraform execution plan
+        working-directory: infra/aws
+        env:
+          TF_VAR_vpc_id: ${{ vars.AWS_VPC_ID }}
+          TF_VAR_public_subnet_ids: ${{ vars.AWS_PUBLIC_SUBNET_IDS }}
+          TF_VAR_allowed_ingress_cidr: ${{ vars.AWS_ALLOWED_INGRESS_CIDRS || '[]' }}
+        run: terraform plan -input=false -lock=false -refresh=false -no-color
+
+  deploy-and-smoke-test:
+    name: Push image, deploy and smoke test
+    needs: [test, terraform]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - name: Grant execute permission for Gradle Wrapper
+        run: chmod +x gradlew
+      # この job は test job に依存する。Docker build より前に必ず ./gradlew test が成功している。
+      - name: Build application artifact after tests
+        run: ./gradlew bootJar
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Record currently deployed revision
+        id: previous
+        run: |
+          echo "task_definition=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text)" >> "$GITHUB_OUTPUT"
+          echo "desired_count=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].desiredCount' --output text)" >> "$GITHUB_OUTPUT"
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build and push immutable image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Download active task definition
+        run: aws ecs describe-task-definition --task-definition "$ECS_TASK_DEFINITION_NAME" --query taskDefinition > task-definition.json
+      - name: Render task definition with image digest tag
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: gateway
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+      - name: Register and deploy task definition
+        id: deploy
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: false
+      - name: Install Session Manager plugin
+        run: |
+          if ! command -v session-manager-plugin >/dev/null; then
+            curl --fail --silent --show-error --location \
+              https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb \
+              --output /tmp/session-manager-plugin.deb
+            sudo dpkg -i /tmp/session-manager-plugin.deb
+          fi
+      - name: Start temporary task and wait for stability
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --desired-count 1 \
+            --force-new-deployment >/dev/null
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+      - name: Smoke test through ECS Exec
+        run: |
+          TASK_ARN="$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" --desired-status RUNNING --query 'taskArns[0]' --output text)"
+          test "$TASK_ARN" != "None" || { echo 'No running ECS task found.' >&2; exit 1; }
+
+          for attempt in {1..12}; do
+            if aws ecs execute-command \
+              --cluster "$ECS_CLUSTER" \
+              --task "$TASK_ARN" \
+              --container gateway \
+              --interactive \
+              --command "wget -q -O - http://127.0.0.1:8080/actuator/health | grep -q '\"status\":\"UP\"'"; then
+              exit 0
+            fi
+            echo "ECS Exec is not ready yet (attempt ${attempt}/12)."
+            sleep 10
+          done
+          exit 1
+      - name: Restore normal desired count after successful smoke test
+        if: success()
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --desired-count "${{ steps.previous.outputs.desired_count }}" >/dev/null
+      - name: Roll back failed deployment
+        if: ${{ failure() && steps.deploy.outcome == 'success' }}
+        run: |
+          echo "Rolling back to ${{ steps.previous.outputs.task_definition }}"
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "${{ steps.previous.outputs.task_definition }}" \
+            --desired-count "${{ steps.previous.outputs.desired_count }}" \
+            --force-new-deployment >/dev/null
+      - name: Show recent application logs after failure
+        if: failure()
+        run: aws logs tail "/ecs/multi-llm-gateway" --since 15m || true

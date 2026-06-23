@@ -68,7 +68,7 @@ terraform apply
 
 ## 3. シークレット（API Key等）の初期設定
 
-`secrets.tf` で作成された AWS Secrets Manager のシークレットには、安全性の観点から**ダミーの API キー**が登録されています。ECS タスクを起動する前に、実際の API キーに更新してください。
+`secrets.tf` は AWS Secrets Manager の**シークレット本体だけ**を作成します。シークレット値は Terraform で管理せず、ECS タスクを起動する前に実際の API キーを直接設定してください。
 
 > [!NOTE]
 > `enable_rds = true` の場合、RDS のマスター認証情報はこのシークレットとは別に RDS が作成・管理します。DB のユーザー名・パスワードをこの JSON に追加・更新しないでください。ECS は RDS 管理シークレットを直接参照するため、DB パスワードは Terraform、`terraform.tfvars`、Git に保存されません。

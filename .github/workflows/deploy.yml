@@ -88,21 +88,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: '1.5.0'
+          terraform_version: '1.10.5'
       - name: Check Terraform formatting
         working-directory: infra/aws
         run: terraform fmt -check -recursive
-      - name: Initialize Terraform without state backend
-        working-directory: infra/aws
-        run: terraform init -backend=false -input=false
-      - name: Validate Terraform configuration
-        working-directory: infra/aws
-        run: terraform validate
       - name: Configure AWS credentials for Terraform plan
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+      - name: Initialize Terraform remote state backend
+        working-directory: infra/aws
+        run: terraform init -input=false
+      - name: Validate Terraform configuration
+        working-directory: infra/aws
+        run: terraform validate
       - name: Require Terraform plan inputs
         env:
           AWS_VPC_ID: ${{ vars.AWS_VPC_ID }}
@@ -116,7 +116,7 @@ jobs:
           TF_VAR_vpc_id: ${{ vars.AWS_VPC_ID }}
           TF_VAR_public_subnet_ids: ${{ vars.AWS_PUBLIC_SUBNET_IDS }}
           TF_VAR_allowed_ingress_cidr: ${{ vars.AWS_ALLOWED_INGRESS_CIDRS || '[]' }}
-        run: terraform plan -input=false -lock=false -refresh=false -no-color
+        run: terraform plan -input=false -lock-timeout=5m -no-color
 
   deploy-and-smoke-test:
     name: Push image, deploy and smoke test

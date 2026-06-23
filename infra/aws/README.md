@@ -19,9 +19,12 @@
 ## 2. デプロイ手順
 
 ### ステップ 1: 事前準備
-1. AWS CLI および Terraform（>= 1.5.0）をローカルにインストールします。
+1. AWS CLI および Terraform（>= 1.10.0）をローカルにインストールします。
 2. 適切なIAM権限（管理者権限またはECS/RDS/SecretsManager等の操作権限）を設定し、`aws configure` 等でログインします。
 3. 本ディレクトリに `terraform.tfvars` を作成し、[terraform.tfvars.example](file:///Users/apple/develop/policy-aware-llm-gateway/infra/aws/terraform.tfvars.example) をコピーして既存のVPC ID、サブネットID、アクセス元のグローバルIPアドレスを設定します。
+
+> [!NOTE]
+> Terraform state は S3 backend（`multi-llm-gateway-tfstate-759655305163-ap-northeast-1-an`）で管理します。初回の `terraform init` 前に S3 バケットを作成し、既存のローカル state がある場合は `terraform init -migrate-state` で移行してください。詳細は [AWS Deployment Guide](file:///Users/apple/develop/policy-aware-llm-gateway/docs/AWS_DEPLOYMENT.md) を参照してください。
 
 ### ステップ 2: 初期化とリポジトリの作成
 インフラの土台となるECRリポジトリだけを先行して作成します。

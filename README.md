@@ -1,6 +1,8 @@
 # Policy-Aware Multi-LLM Gateway
 
-> LLM / Agent呼び出しを本番運用するための運用統治レイヤー（Gateway）
+> LLM / Agent 呼び出しを本番運用するための運用統治レイヤー（Gateway）
+>
+> Spring Boot 製 LLM Gateway を、Terraform / ECS Fargate / GitHub Actions OIDC により AWS 上で検証可能にした、本番運用を意識した個人開発・検証構成。
 
 アプリケーションと LLM プロバイダの間に配置し、認証、プロバイダ抽象化、レート制御、可用性、安全性、監査性を一元的に扱う。
 
@@ -16,7 +18,7 @@
 |---|---|---|
 | 第1弾 | [Retrieval品質管理システム](https://github.com/mlprototype/spec-rag-qa) | 品質保証 |
 | 第2弾 | [Agentic RAG with Control Plane](https://github.com/mlprototype/ai-agent-rag) | 動的制御 |
-| **第3弾** | **本リポジトリ（Policy-Aware Multi-LLM Gateway）** | **運用統治** |
+| **第3弾** | **本リポジトリ（Policy-Aware Multi-LLM Gateway）** | **運用統治 / AWS運用基盤** |
 
 ---
 
@@ -30,6 +32,18 @@ LLM/Agent を本番で運用する際、コスト暴走・プロバイダ障害�
 本プロジェクトは、これらを横断的に統治する Gateway 層を、
 Spring Boot / Flyway / Redis / structured logging を土台に段階的に実装する設計探索である。
 単に AI を呼び出せるだけでなく、安全に使え、障害時に劣化運転でき、後から追跡できることを重視している。
+
+AWS 検証環境では、Terraform による IaC、ECS Fargate へのコンテナ配備、Secrets Manager、CloudWatch、GitHub Actions OIDC を組み合わせる。アプリケーション機能に加え、デプロイ、シークレット管理、可観測性、コスト管理までを一貫して検証できるようにしている。
+
+## Key Features
+
+- OpenAI 互換 API Gateway と OpenAI / Anthropic Provider 抽象化
+- Tenant-based API Key 認証、Redis-based Rate Limiting、Circuit Breaker / Fallback Routing
+- PII Detection、Prompt Injection Detection、非同期 Audit Log、構造化 JSON Logging
+- Prometheus / Grafana によるローカル可観測性と、local/dev 向け Swagger UI / OpenAPI
+- Terraform による AWS Infrastructure（ECS Fargate、ECR、CloudWatch、Secrets Manager、RDS）
+- GitHub Actions OIDC による CI/CD、ECS Exec smoke test、失敗時の自動 rollback
+- S3 Remote State と native locking、Zero-Idle のコスト最適化設計
 
 ## 想定ユースケース
 
@@ -98,6 +112,17 @@ graph TD
     Ctrl -.->|Async Audit Event with Usage| Audit
 ```
 
+### AWS Architecture
+
+AWS 上の構成、CI/CD、Secrets 管理、Zero-Idle 設計の詳細は以下を参照してください。
+
+- [AWS Architecture](docs/infra/AWS_ARCHITECTURE.md)
+- [CI/CD Pipeline](docs/infra/CI_CD_PIPELINE.md)
+- [Security Model](docs/infra/SECURITY_MODEL.md)
+- [Operations Runbook](docs/infra/OPERATIONS_RUNBOOK.md)
+- [Cost Optimization Strategy](docs/infra/COST_OPTIMIZATION.md)
+- [Terraform Deployment Guide](infra/aws/TERRAFORM_DEPLOYMENT_GUIDE.md)
+
 **Response Headers** — 全レスポンスに Gateway 拡張ヘッダが付与されます:
 
 | Header | Description |
@@ -133,22 +158,23 @@ graph TD
 
 | Component | Technology |
 |:---|:---|
-| Language | Java 21 (Virtual Threads) |
-| Framework | Spring Boot 3.5.14 |
+| Language | Java 21 |
+| Framework | Spring Boot 3.5.x |
 | Web | Spring MVC + Virtual Threads |
-| HTTP Client | RestClient |
-| Database | PostgreSQL 16 + Flyway |
-| Cache | Redis 7 |
-| Logging | Logback + logstash-logback-encoder (structured JSON) |
-| Resilience | Resilience4j (Circuit Breaker) |
+| Database | PostgreSQL + Flyway |
+| Cache | Redis |
+| Resilience | Resilience4j |
+| Observability | Structured JSON Logging, Prometheus, Grafana, CloudWatch |
 | API Docs | springdoc-openapi / Swagger UI |
-| Build | Gradle 8.14 |
-| Container | Docker Compose |
-| CI | GitHub Actions |
+| Container | Docker, Docker Compose |
+| Cloud | AWS ECS Fargate, ECR, RDS, Secrets Manager, CloudWatch |
+| IaC | Terraform, S3 Remote State, S3 Native Locking |
+| CI/CD | GitHub Actions, OIDC, ECR Push, ECS Deploy, Smoke Test, Auto Rollback |
+| Build | Gradle |
 
 ---
 
-## Quick Start
+## Quick Start - Local Development
 
 ### Prerequisites
 
@@ -260,6 +286,15 @@ Swagger UI / OpenAPI endpoint はドキュメント閲覧のため認証・RateL
 
 ---
 
+## Quick Start - AWS Verification
+
+AWS 上の検証では Terraform と GitHub Actions OIDC を利用します。通常は `desired_count = 0` とし、検証時だけ RDS と ECS タスクを起動します。詳細手順は README ではなく、以下の運用ドキュメントを参照してください。
+
+- [Terraform Deployment Guide](infra/aws/TERRAFORM_DEPLOYMENT_GUIDE.md)
+- [Operations Runbook](docs/infra/OPERATIONS_RUNBOOK.md)
+
+---
+
 ## API Reference
 
 ### `POST /v1/chat/completions`
@@ -333,20 +368,25 @@ OpenAI Chat Completions API 互換エンドポイント。
 ## ディレクトリ構成
 
 ```text
-src/main/java/io/github/mlprototype/gateway/
-├── api/              # REST Controllers
-├── audit/            # Structured audit logging
-├── config/           # RestClient, Jackson configuration
-├── dto/              # Request / Response DTOs
-├── exception/        # Global exception handler
-├── filter/           # Servlet filters (TraceId, Latency, ApiKey, RateLimit)
-├── content/          # (Sprint 4) Security & Content filtering (PII / Injection)
-├── provider/         # LLM Provider abstraction
-│   ├── openai/       # OpenAI implementation
-│   └── anthropic/    # Anthropic implementation
-├── ratelimit/        # Redis-based fixed-window rate limiting
-├── router/           # Provider routing logic
-└── security/         # Tenant / API client authentication
+.
+├── .github/workflows/            # CI / AWS deploy workflow
+├── docker/                       # Prometheus / Grafana設定
+├── docs/                         # 設計・運用ドキュメント、ADR
+├── infra/aws/                    # TerraformによるAWS基盤
+├── src/
+│   ├── main/java/io/github/mlprototype/gateway/
+│   │   ├── api/                  # REST Controller
+│   │   ├── audit/                # Structured audit logging
+│   │   ├── content/              # PII / Injection filtering
+│   │   ├── filter/               # Trace / API Key / Rate Limit filters
+│   │   ├── provider/             # LLM Provider abstraction
+│   │   ├── router/               # Provider routing / fallback
+│   │   └── security/             # Tenant / API Key authentication
+│   ├── main/resources/           # Spring profiles / Flyway migration
+│   └── test/java/                # Unit / integration tests
+├── Dockerfile
+├── docker-compose.yml
+└── build.gradle
 ```
 
 ---
@@ -373,31 +413,52 @@ src/main/java/io/github/mlprototype/gateway/
 
 ## AWS Deployment & Cost Strategy
 
-This project includes a fully defined **Infrastructure as Code (IaC)** design using Terraform under [infra/aws/](file:///Users/apple/develop/policy-aware-llm-gateway/infra/aws/).
+Terraform で [AWS 基盤](infra/aws/) を管理し、ECS Fargate、ECR、CloudWatch、IAM、Security Group、Secrets Manager を組み合わせて Gateway を検証する。RDS PostgreSQL は起動検証時のみ有効化し、Redis と ALB も必要時だけ作成する。本番運用を意識した個人開発・検証構成であり、常時稼働する商用構成ではない。
 
-To balance enterprise production standards with personal development budgets, the architecture is designed around a **Zero-Idle & Cost-Aware Architecture (FinOps-friendly)**.
+### State and Secrets
 
-### Architectural Features & Cost Controls
-- **Zero-Idle Task Policy**: The ECS Fargate service defaults to `desired_count = 0` to prevent ongoing CPU/Memory runtime charges when not testing.
-- **Toggleable Expensive Components**: Managed services like **Application Load Balancers (ALB)**, **RDS PostgreSQL**, and **ElastiCache Redis** are disabled by default via Terraform variables (`enable_alb = false`, etc.).
-- **NAT Gateway-less Architecture**: To avoid baseline NAT Gateway costs, ECS tasks are deployed on public subnets with direct public IP mapping, allowing direct outbound connection to OpenAI / Anthropic APIs (limited to short-term verification).
-- **JSON Consolidated Secret**: Consolidates multiple API keys into a single JSON secret in **AWS Secrets Manager** to minimize billing to a single secret fee (approx. $0.40/month), contrasting with a production-ready decoupled secret architecture.
-- **Secure CI/CD Workflow**: Integrates a GitHub Actions workflow using **OIDC (OpenID Connect)** authentication, utilizing Buildx layer caching, and executing non-blocking service updates to avoid runner timeout billing.
-- **Cost-Free CloudWatch Dashboard**: Includes a single CloudWatch Dashboard ([infra/aws/dashboard.tf](file:///Users/apple/develop/policy-aware-llm-gateway/infra/aws/dashboard.tf)) capturing CPU/Memory usage, running task counts, and Log Insights without custom metric fees.
+- Terraform state は S3 remote backend で管理し、versioning、暗号化、public access block、`use_lockfile = true` を有効化する。
+- GitHub Actions の Terraform plan は remote state と AWS 実リソースを参照する。`-backend=false`、`-lock=false`、`-refresh=false` は使用しない。
+- API Key の実値は Secrets Manager へ直接登録し、Terraform state に保存しない。CI Role には `secretsmanager:GetSecretValue` を付与しない。
 
-### CI/CD Quality Gates and Rollback
+### CI/CD Verification
 
-`main` へのデプロイワークフローは、次の順序で実行します。`./gradlew test` が成功するまで Docker build、ECR push、ECS 更新へ進みません。
+- `ci.yml` は全 push / pull request で `./gradlew test` と artifact build を実行する。
+- `deploy.yml` は対象パスを含む `main` への push と手動実行で、Terraform plan、Git SHA タグの ECR push、ECS Task Definition 更新を実行する。
+- デプロイ後はタスクを一時的に起動し、ECS Exec から `/actuator/health` を確認する。失敗時は直前の Task Definition と起動数へ自動 rollback する。
+- CI Runner の可変 IP に合わせて Security Group を広げず、コンテナ内部から health check する。
 
-1. PostgreSQL / Redis を使った `./gradlew test`
-2. `terraform fmt -check`、`terraform validate`、OIDC 認証後の `terraform plan`
-3. イミュータブルな Git SHA タグの ECR push と ECS タスク定義更新
-4. ECS Exec によりタスク内の `/actuator/health` を smoke test
-5. 成功時は元の `desired_count` へ戻し、失敗時は直前のタスク定義と起動数へ自動ロールバック
+### Zero-Idle Cost Control
 
-ECS Exec を使うため、CI ランナーの IP を Security Group へ一時的に開放しません。実行前に RDS を有効化した検証環境と、GitHub Actions 用の OIDC ロール・Variables を設定してください。具体的な設定は [AWS Deployment Guide](docs/AWS_DEPLOYMENT.md#14-github-actions-cicd) を参照してください。
+`desired_count = 0` を通常状態とし、検証後は ECS タスクを停止する。RDS、Redis、ALB はトグルを `false` に戻して選別削除し、ECR、Secrets Manager、IAM、remote state は次回検証のため保持する。
 
-For detailed design decisions and cost breakdowns, see [docs/AWS_COST_STRATEGY.md](file:///Users/apple/develop/policy-aware-llm-gateway/docs/AWS_COST_STRATEGY.md).
+詳細は [AWS Architecture](docs/infra/AWS_ARCHITECTURE.md)、[CI/CD Pipeline](docs/infra/CI_CD_PIPELINE.md)、[Security Model](docs/infra/SECURITY_MODEL.md)、[Cost Optimization Strategy](docs/infra/COST_OPTIMIZATION.md) を参照してください。
+
+---
+
+## Documentation
+
+### Architecture and Operations
+
+- [AWS Architecture](docs/infra/AWS_ARCHITECTURE.md)
+- [CI/CD Pipeline](docs/infra/CI_CD_PIPELINE.md)
+- [Security Model](docs/infra/SECURITY_MODEL.md)
+- [Operations Runbook](docs/infra/OPERATIONS_RUNBOOK.md)
+- [Cost Optimization Strategy](docs/infra/COST_OPTIMIZATION.md)
+- [Terraform Deployment Guide](infra/aws/TERRAFORM_DEPLOYMENT_GUIDE.md)
+
+### Architecture Decision Records
+
+- [ADR-001: Use ECS Fargate](docs/adr/001-use-ecs-fargate.md)
+- [ADR-002: Use S3 Remote State](docs/adr/002-use-s3-remote-state.md)
+- [ADR-003: Use GitHub Actions OIDC](docs/adr/003-use-github-actions-oidc.md)
+- [ADR-004: Manage Secret Values Outside Terraform State](docs/adr/004-secrets-manager-without-secret-version.md)
+- [ADR-005: Adopt Zero-Idle Architecture](docs/adr/005-zero-idle-cost-strategy.md)
+- [ADR-006: Use ECS Exec for Smoke Test](docs/adr/006-ecs-exec-smoke-test.md)
+
+### Configuration
+
+- [Configuration Reference](docs/configuration.md)
 
 ---
 
@@ -461,18 +522,25 @@ curl -i -s http://localhost:8080/v1/chat/completions \
 
 ## Current Status
 
-Sprint 5 までで実装済み:
+### Application Features
 
-- **Multi-provider support**: OpenAI / Anthropic の 2 Provider に対応
-- **Tenant-based authentication**: DB (`tenants`, `api_clients`) と SHA-256 hash による API key 認証
-- **Redis-based rate limiting**: tenant 単位の fixed-window rate limiting（fail-open 設計）
-- **Circuit Breaker**: provider 単位の Resilience4j breaker
-- **Fallback routing**: timeout / 5xx / breaker-open 時の single-step fallback
-- **Degraded mode visibility**: requested/resolved provider と fallback 使用有無を response header / structured audit log に出力
-- **Content Security**: PII検知/マスキング、プロンプトインジェクション検知、テナントレベルのポリシーエンジン
-- **Persistent Audit Log**: リクエストのハッシュ、サニタイズされたプレビュー、使用トークン、レイテンシを DB へ非同期保存（Fail-open 設計）
-- **Observability**: Prometheus と Grafana を使用した、RPS、レイテンシ、エラー内訳、フォールバック、セキュリティブロックの可観測性ダッシュボード
-- **Swagger UI / OpenAPI**: local/dev 環境で `/swagger-ui.html` を提供し、API Key 認証付きで実 API を試行可能
+- OpenAI / Anthropic の複数 Provider と OpenAI 互換 API
+- DB のテナント情報と SHA-256 hash を用いた API Key 認証
+- Redis fixed-window の rate limiting（Redis 障害時は fail-open）
+- Circuit Breaker と timeout / 5xx / breaker-open 時の single-step fallback
+- PII 検知・マスキング、Prompt Injection 検知、テナントごとのポリシー
+- リクエストのハッシュ、サニタイズ済みプレビュー、利用量を保存する非同期 Audit Log
+- Prometheus / Grafana、構造化ログ、local/dev 向け Swagger UI / OpenAPI
+
+### AWS / DevOps
+
+- Terraform 管理の AWS Infrastructure と ECS Fargate deployment
+- Git SHA タグによる ECR image push と CloudWatch Logs / Dashboard
+- S3 remote state、versioning、encryption、native locking
+- GitHub Actions OIDC と remote state を参照する Terraform plan
+- ECS Exec による内部 smoke test と失敗時の自動 rollback
+- Terraform state に Secret 値を保存しない Secrets Manager 運用
+- `desired_count = 0` を基本とする Zero-Idle cleanup strategy
 
 ---
 
@@ -485,6 +553,10 @@ Sprint 5 までで実装済み:
 | **Audit Log** | フェイルオープンかつ非同期で動作。現時点では、厳密な配信保証（Strong Delivery Guarantees）はスコープ外 |
 | **Authentication** | APIキーはDBにSHA-256ハッシュで保存。より強固なシークレット管理メカニズムよりも、決定論的な検索（Lookup）の簡便性を優先している |
 | **Routing** | シングルステップのみのフォールバック対応であり、コストやレイテンシを考慮した高度なルーティングは含まれていない |
+| **AWS Topology** | 個人開発・検証構成であり、商用本番運用済みの構成ではない。既定では低コスト優先の Public Subnet 検証構成を使う |
+| **AWS Services** | Redis と ALB は optional であり、デフォルトでは作成しない |
+| **Availability** | Private Subnet、WAF、Auto Scaling、Multi-AZ、厳密な SLA / DR、Blue-Green Deployment は未対応 |
+| **Providers** | AWS Bedrock Provider と Azure OpenAI Provider は未実装 |
 
 ---
 
@@ -492,6 +564,10 @@ Sprint 5 までで実装済み:
 
 以下は現時点で未実装だが、次のフェーズでの対応を検討している改善候補です。
 
+- **AWS Bedrock / Azure OpenAI Provider**: Provider 抽象化を活かしたクラウド LLM Provider の追加。
+- **Security scanning**: Trivy、Checkov、Dependabot を CI/CD に組み込み、依存関係・コンテナ・IaC を継続的に確認する。
+- **Production-like AWS topology**: Private Subnet、ALB、WAF、Auto Scaling、CloudWatch Alarm、Budget Alert を含む構成の検証。
+- **Admin UI**: React / TypeScript による最小限のテナント・ポリシー確認画面。
 - **AIベースのPII・プロンプトインジェクション検知**: ルールベースの検知から、軽量なローカルLLMや専用のGuardrailsモデルを用いた、コンテキスト依存の高度な検知への移行。
 - **レスポンス側の出力リダクション**: リクエスト内容だけでなく、LLMからのレスポンスに含まれるPIIや不適切な表現をリアルタイムで検知・マスキングする機能の追加。
 - **高信頼性監査ログの配信保証**: Fail-open設計の非同期ログ保存に加え、メッセージキュー（KafkaやRabbitMQ等）を導入し、厳密なログの配信保証（At-least-once）とトレーサビリティの向上を実現。

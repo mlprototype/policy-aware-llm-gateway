@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
+import org.springframework.web.util.ContentCachingResponseWrapper;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -36,12 +37,14 @@ public class LatencyFilter extends OncePerRequestFilter {
                                     FilterChain filterChain) throws ServletException, IOException {
         long startTime = System.currentTimeMillis();
         request.setAttribute(START_TIME_ATTR, startTime);
+        ContentCachingResponseWrapper responseWrapper = new ContentCachingResponseWrapper(response);
 
         try {
-            filterChain.doFilter(request, response);
+            filterChain.doFilter(request, responseWrapper);
         } finally {
             long latency = System.currentTimeMillis() - startTime;
-            response.setHeader(LATENCY_HEADER, String.valueOf(latency));
+            responseWrapper.setHeader(LATENCY_HEADER, String.valueOf(latency));
+            responseWrapper.copyBodyToResponse();
         }
     }
 }

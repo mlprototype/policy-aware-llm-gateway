@@ -3,6 +3,7 @@ package io.github.mlprototype.gateway.content;
 import io.github.mlprototype.gateway.dto.Message;
 import org.springframework.stereotype.Component;
 
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -15,11 +16,14 @@ import java.util.regex.Pattern;
 @Component
 public class InjectionDetector {
 
+    private static final Pattern FORMAT_CHARACTERS = Pattern.compile("\\p{Cf}");
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+
     private final Map<String, Pattern> rules = new LinkedHashMap<>();
 
     public InjectionDetector() {
-        rules.put("IGNORE_INSTRUCTIONS", Pattern.compile("(?i)ignore\\s+(all\\s+)?(previous|prior|above)\\s+(instructions|prompts|rules)|(前|これまで|以前|上記)の(指示|ルール|プロンプト|命令|制約)を(無視|忘れ|破棄|取り消)"));
-        rules.put("REVEAL_SYSTEM_PROMPT", Pattern.compile("(?i)(reveal|show|display|print|output)\\s+(the\\s+)?(system|hidden|internal)\\s+(prompt|instructions)|(システム|内部|隠し|初期)(プロンプト|指示|ルール)を(教え|表示|出力|出力し|見せ)"));
+        rules.put("IGNORE_INSTRUCTIONS", Pattern.compile("(?i)ignore\\s+(all\\s+)?(previous|prior|above)\\s+(instructions|prompts|rules)|(前|これまで|以前|上記)の.{0,12}?(指示|ルール|プロンプト|命令|制約)を.{0,8}?(無視|忘れ|破棄|取り消)"));
+        rules.put("REVEAL_SYSTEM_PROMPT", Pattern.compile("(?i)(reveal|show|display|print|output)\\s+(the\\s+)?(system|hidden|internal)\\s+(prompt|instructions)|(システム|内部|隠し|初期).{0,8}?(プロンプト|指示|ルール)を.{0,12}?(教え|表示|出力|見せ|開示|公開)"));
         rules.put("BYPASS_POLICY", Pattern.compile("(?i)(bypass|circumvent|ignore|disable)\\s+(the\\s+)?(policy|policies|safety|filter|guard)|(ポリシー|フィルター|制限|安全装置)を(回避|無効化|無視|解除)"));
         rules.put("ROLE_MANIPULATION", Pattern.compile("(?i)(you\\s+are\\s+now|act\\s+as|pretend\\s+to\\s+be)\\s+.{0,30}(without|with\\s+no)\\s+(any\\s+)?(restrict|filter|limit)|(制限なく|無制限の|何でもできる).{0,15}(AI|キャラクター|として振る舞|になりきっ)"));
         rules.put("JAILBREAK_PATTERN", Pattern.compile("(?i)(DAN\\b|do\\s+anything\\s+now|jailbreak|developer\\s+mode)|(開発者モード|ジェイルブレイク|脱獄)"));
@@ -45,14 +49,21 @@ public class InjectionDetector {
             if (content == null || content.isEmpty()) {
                 continue;
             }
+            String normalizedContent = normalize(content);
 
             for (Map.Entry<String, Pattern> entry : rules.entrySet()) {
-                if (!matchedRules.contains(entry.getKey()) && entry.getValue().matcher(content).find()) {
+                if (!matchedRules.contains(entry.getKey()) && entry.getValue().matcher(normalizedContent).find()) {
                     matchedRules.add(entry.getKey());
                 }
             }
         }
 
         return new InjectionDetectionResult(!matchedRules.isEmpty(), matchedRules);
+    }
+
+    private String normalize(String content) {
+        String normalized = Normalizer.normalize(content, Normalizer.Form.NFKC);
+        normalized = FORMAT_CHARACTERS.matcher(normalized).replaceAll("");
+        return WHITESPACE.matcher(normalized).replaceAll(" ").trim();
     }
 }

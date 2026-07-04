@@ -2,23 +2,23 @@
 
 > LLM / Agent 呼び出しを本番運用するための運用統治レイヤー（Gateway）
 >
-> Spring Boot 製 LLM Gateway を、Terraform / ECS Fargate / GitHub Actions OIDC により AWS 上で検証可能にした、本番運用を意識した個人開発・検証構成。
+> Spring Boot 製 LLM Gateway と AWS 運用基盤を組み合わせた、本番運用を想定したリファレンス実装。
 
 アプリケーションと LLM プロバイダの間に配置し、認証、プロバイダ抽象化、レート制御、可用性、安全性、監査性を一元的に扱う。
 
 ---
 
-## ポートフォリオ内での位置づけ
+## 関連プロジェクトと設計上の位置づけ
 
 本リポジトリは、生成AIを業務システムへ安全に導入するための
-「品質保証 × 動的制御 × 運用統治」3層構成のポートフォリオの
-**第3弾「運用統治」** に位置づけられます。
+「品質保証・動的制御・運用統治」からなる3層アーキテクチャのうち、
+**運用統治レイヤー** を担います。
 
-| 位置 | リポジトリ | レイヤー |
-|---|---|---|
-| 第1弾 | [Retrieval品質管理システム](https://github.com/mlprototype/spec-rag-qa) | 品質保証 |
-| 第2弾 | [Agentic RAG with Control Plane](https://github.com/mlprototype/ai-agent-rag) | 動的制御 |
-| **第3弾** | **本リポジトリ（Policy-Aware Multi-LLM Gateway）** | **運用統治 / AWS運用基盤** |
+| プロジェクト | 主な責務 |
+|---|---|
+| [Retrieval品質管理システム](https://github.com/mlprototype/spec-rag-qa) | 品質保証 |
+| [Agentic RAG with Control Plane](https://github.com/mlprototype/ai-agent-rag) | 動的制御 |
+| **本リポジトリ（Policy-Aware Multi-LLM Gateway）** | **運用統治 / AWS運用基盤** |
 
 ---
 

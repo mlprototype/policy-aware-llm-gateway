@@ -85,7 +85,7 @@ class ProviderRoutingIntegrationTest {
                             new io.github.mlprototype.gateway.content.SecurityDecision(
                                     new io.github.mlprototype.gateway.content.PiiDetectionResult(false, java.util.List.of()),
                                     io.github.mlprototype.gateway.content.PiiAction.MASK,
-                                    new io.github.mlprototype.gateway.content.InjectionDetectionResult(false, java.util.List.of()),
+                                    io.github.mlprototype.gateway.content.InjectionDetectionResult.none(),
                                     io.github.mlprototype.gateway.content.InjectionAction.WARN),
                             req,
                             "preview",

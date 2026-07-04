@@ -87,6 +87,12 @@ public class AuditLogEntity {
     @Column(name = "injection_rules", length = 500)
     private String injectionRules;
 
+    @Column(name = "injection_score")
+    private Integer injectionScore;
+
+    @Column(name = "injection_categories", length = 500)
+    private String injectionCategories;
+
     @Column(name = "error_message", length = 1000)
     private String errorMessage;
 

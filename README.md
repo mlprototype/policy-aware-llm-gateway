@@ -136,6 +136,8 @@ AWS 上の構成、CI/CD、Secrets 管理、Zero-Idle 設計の詳細は以下�
 | `X-RateLimit-Remaining` | 現在の 1 分間における残りリクエスト可能数 |
 | `X-Gateway-Security-Blocked` | セキュリティポリシー違反によりブロックされた場合 (`true`) |
 | `X-Gateway-Block-Reason` | ブロック理由 (`PII_DETECTED`, `INJECTION_DETECTED`) |
+| `X-Gateway-Security-Score` | Prompt Injection BLOCK 時の検知スコア |
+| `X-Gateway-Security-Categories` | Prompt Injection BLOCK 時に一致したカテゴリ（カンマ区切り） |
 
 ---
 
@@ -336,9 +338,9 @@ OpenAI Chat Completions API 互換エンドポイント。
 
 ### HTTP Semantics
 
-- `400 Bad Request`: 無効なリクエスト形式、またはセキュリティポリシー違反（PII/インジェクションによるブロック）
+- `400 Bad Request`: 無効なリクエスト形式、または PII BLOCK
 - `401 Unauthorized`: APIキーの欠落または無効
-- `403 Forbidden`: 認証済みだが、テナントが一時停止状態
+- `403 Forbidden`: 認証済みだが、テナントが一時停止状態、または Prompt Injection BLOCK
 - `429 Too Many Requests`: テナントのレートリミット（利用上限）超過
 - `502 Bad Gateway`: アップストリーム（LLMプロバイダ）の 4xx / 5xx エラー、または無効なレスポンス
 - `503 Service Unavailable`: タイムアウト / 接続エラー / サーキットブレーカーのオープン状態
@@ -350,9 +352,13 @@ OpenAI Chat Completions API 互換エンドポイント。
 - **`ALLOW`**: 何もせず通過。
 - **`WARN`**: リクエストは通過するが、監査ログに検知フラグを立てて記録。
 - **`MASK`**: (PII専用) リクエスト本文の該当文字列を `[EMAIL_REDACTED]` などにマスクして Provider へ送信。
-- **`BLOCK`**: 400 Bad Request で遮断。アップストリームへは送信しない。
+- **`BLOCK`**: PII は 400 Bad Request、Prompt Injection は 403 Forbidden で遮断。アップストリームへは送信しない。
 
 デフォルトでは PII は `MASK`、プロンプトインジェクションは `BLOCK` です。テナントの `pii_action` / `injection_action` が DB で設定されている場合は、テナント設定が優先されます。
+
+Prompt Injection Detection は NFKC・小文字化・format character 除去・空白正規化を行い、通常テキストと空白除去テキストの両方へカテゴリ別ルールを適用します。同一ルールはリクエスト内で一度だけ加点し、合計スコアが 70 以上の場合に Prompt Injection と判定します。`injection_action=BLOCK` の場合は Provider へ送信せず、403 Forbidden で遮断します。
+
+監査ログには `injection_detected`、`injection_action`、`injection_rules`、`injection_score`、`injection_categories` を保存します。一致したユーザー入力そのものはルール情報として保存しません。
 
 > **Note:** PII BLOCK の優先順位は最上位となります。同一リクエスト内で PII とインジェクションが検知された場合、PII のアクションが BLOCK であれば即時エラーとなります。
 

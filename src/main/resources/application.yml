@@ -77,5 +77,5 @@ gateway:
       api-key: ${ANTHROPIC_API_KEY:}
       api-version: 2023-06-01
       timeout-seconds: 30
-      default-model: claude-3-haiku-20240307
+      default-model: claude-haiku-4-5-20251001
       max-tokens-limit: 4096

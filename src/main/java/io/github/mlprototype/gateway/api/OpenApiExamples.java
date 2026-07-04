@@ -1,9 +1,45 @@
 package io.github.mlprototype.gateway.api;
 
 /**
- * Response examples used by the generated OpenAPI document.
+ * Request and response examples used by the generated OpenAPI document.
  */
 final class OpenApiExamples {
+
+    static final String CHAT_REQUEST_OPENAI = """
+            {
+              "model": "gpt-4o-mini",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "あなたは簡潔に回答するカスタマーサポートアシスタントです。"
+                },
+                {
+                  "role": "user",
+                  "content": "ログイン時に認証エラーが表示されます。確認方法を教えてください。"
+                }
+              ],
+              "temperature": 0.2,
+              "max_tokens": 512
+            }
+            """;
+
+    static final String CHAT_REQUEST_ANTHROPIC = """
+            {
+              "model": "claude-haiku-4-5-20251001",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "あなたは簡潔に回答するカスタマーサポートアシスタントです。"
+                },
+                {
+                  "role": "user",
+                  "content": "ログイン時に認証エラーが表示されます。確認方法を教えてください。"
+                }
+              ],
+              "temperature": 0.2,
+              "max_tokens": 512
+            }
+            """;
 
     static final String CHAT_COMPLETION_SUCCESS = """
             {
@@ -46,6 +82,26 @@ final class OpenApiExamples {
               "message": "Request blocked due to security policy: PII_DETECTED",
               "timestamp": 1783163647000,
               "trace_id": "e9b933cc-0dc8-4925-b971-17b2cf24fbbb"
+            }
+            """;
+
+    static final String BAD_REQUEST_PROVIDER_MODEL = """
+            {
+              "status": 400,
+              "error": "Bad Request",
+              "message": "Model 'gpt-4o-mini' is not compatible with provider 'anthropic'",
+              "timestamp": 1783163647000,
+              "trace_id": "0adabb34-d7e5-4bdc-a95d-dfc1d3ea06bc"
+            }
+            """;
+
+    static final String BAD_REQUEST_ANTHROPIC_MESSAGES = """
+            {
+              "status": 400,
+              "error": "Bad Request",
+              "message": "Anthropic requests require at least one user or assistant message",
+              "timestamp": 1783163647000,
+              "trace_id": "860db2af-3f38-40ae-a23f-8a7405504ed1"
             }
             """;
 

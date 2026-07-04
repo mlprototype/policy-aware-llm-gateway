@@ -334,11 +334,13 @@ OpenAI Chat Completions API 互換エンドポイント。
 
 **Cost Safety:** `max_tokens` は Gateway 側で上限 4096 にクランプされます。
 
+`model` を指定する場合は選択した Provider と互換性のあるモデル名が必要です。OpenAIモデルを Anthropic に指定するなどの不一致は、Provider 呼び出し前に `400 Bad Request` として拒否します。`model` を省略した場合は Provider ごとのデフォルトモデルを使用します。Anthropicでは `system` 以外に、最低1件の `user` または `assistant` メッセージが必要です。
+
 **Migration Note:** request header は `X-Gateway-Requested-Provider` が正です。`X-Gateway-Provider` を request で送る形式は後方互換のため一時的に許可しています。両方送信して値が不一致の場合は `400 Bad Request` を返します。
 
 ### HTTP Semantics
 
-- `400 Bad Request`: 無効なリクエスト形式、または PII BLOCK
+- `400 Bad Request`: 無効なリクエスト形式、Provider/modelの不一致、または PII BLOCK
 - `401 Unauthorized`: APIキーの欠落または無効
 - `403 Forbidden`: 認証済みだが、テナントが一時停止状態、または Prompt Injection BLOCK
 - `429 Too Many Requests`: テナントのレートリミット（利用上限）超過
@@ -365,6 +367,7 @@ Prompt Injection Detection は NFKC・小文字化・format character 除去・�
 ### Degraded Mode
 
 - fallback は 1 段のみです。`openai -> anthropic`、`anthropic -> openai`
+- fallback先と元のモデルに互換性がない場合は、fallback先のデフォルトモデルを使用します
 - fallback 対象は `timeout`, `connection error`, `upstream 5xx`, `breaker-open`
 - provider 4xx は fallback しません
 - `INVALID_RESPONSE` は upstream schema drift と mapper 不整合の両方を含み得るため、Sprint 3 では安全側で fallback 対象外にしています

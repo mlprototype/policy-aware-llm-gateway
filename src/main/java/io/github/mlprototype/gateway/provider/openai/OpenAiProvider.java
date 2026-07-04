@@ -4,6 +4,7 @@ import io.github.mlprototype.gateway.dto.ChatRequest;
 import io.github.mlprototype.gateway.dto.ChatResponse;
 import io.github.mlprototype.gateway.exception.ProviderException;
 import io.github.mlprototype.gateway.provider.LlmProvider;
+import io.github.mlprototype.gateway.provider.ProviderErrorDetailExtractor;
 import io.github.mlprototype.gateway.provider.ProviderFailureClassifier;
 import io.github.mlprototype.gateway.provider.ProviderType;
 import lombok.extern.slf4j.Slf4j;
@@ -24,14 +25,17 @@ public class OpenAiProvider implements LlmProvider {
     private final RestClient restClient;
     private final OpenAiRequestMapper requestMapper;
     private final ProviderFailureClassifier failureClassifier;
+    private final ProviderErrorDetailExtractor errorDetailExtractor;
 
     public OpenAiProvider(
             @Qualifier("openAiRestClient") RestClient restClient,
             OpenAiRequestMapper requestMapper,
-            ProviderFailureClassifier failureClassifier) {
+            ProviderFailureClassifier failureClassifier,
+            ProviderErrorDetailExtractor errorDetailExtractor) {
         this.restClient = restClient;
         this.requestMapper = requestMapper;
         this.failureClassifier = failureClassifier;
+        this.errorDetailExtractor = errorDetailExtractor;
     }
 
     @Override
@@ -51,10 +55,16 @@ public class OpenAiProvider implements LlmProvider {
                     .body(openAiRequest)
                     .retrieve()
                     .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
-                        throw failureClassifier.upstream4xx(ProviderType.OPENAI, res.getStatusCode().value());
+                        throw failureClassifier.upstream4xx(
+                                ProviderType.OPENAI,
+                                res.getStatusCode().value(),
+                                errorDetailExtractor.extract(res));
                     })
                     .onStatus(HttpStatusCode::is5xxServerError, (req, res) -> {
-                        throw failureClassifier.upstream5xx(ProviderType.OPENAI, res.getStatusCode().value());
+                        throw failureClassifier.upstream5xx(
+                                ProviderType.OPENAI,
+                                res.getStatusCode().value(),
+                                errorDetailExtractor.extract(res));
                     })
                     .body(ChatResponse.class);
 

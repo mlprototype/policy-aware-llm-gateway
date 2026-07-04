@@ -66,26 +66,18 @@ public class ChatCompletionController {
                     content = @Content(
                             mediaType = "application/json",
                             schema = @Schema(implementation = ChatRequest.class),
-                            examples = @ExampleObject(
-                                    name = "日本語リクエスト",
-                                    value = """
-                                            {
-                                              "model": "gpt-4o-mini",
-                                              "messages": [
-                                                {
-                                                  "role": "system",
-                                                  "content": "あなたは優秀なカスタマーサポートアシスタントです。ユーザーからの問い合わせ内容を分析し、対応優先度（高/中/低）と要約を簡潔な日本語で出力してください。"
-                                                },
-                                                {
-                                                  "role": "user",
-                                                  "content": "【問い合わせ内容】システム移行後から管理画面にログインできなくなりました。「認証エラー」と表示されます。業務への影響が大きいため、至急原因と対策をご連絡ください。"
-                                                }
-                                              ],
-                                              "temperature": 0.2,
-                                              "max_tokens": 512
-                                            }
-                                            """
-                            )
+                            examples = {
+                                    @ExampleObject(
+                                            name = "openAiRequest",
+                                            summary = "OpenAI向け日本語リクエスト",
+                                            value = OpenApiExamples.CHAT_REQUEST_OPENAI
+                                    ),
+                                    @ExampleObject(
+                                            name = "anthropicRequest",
+                                            summary = "Anthropic向け日本語リクエスト",
+                                            value = OpenApiExamples.CHAT_REQUEST_ANTHROPIC
+                                    )
+                            }
                     )
             )
     )
@@ -119,6 +111,16 @@ public class ChatCompletionController {
                                             name = "piiBlocked",
                                             summary = "PII ポリシーによるブロック",
                                             value = OpenApiExamples.BAD_REQUEST_PII_BLOCK
+                                    ),
+                                    @ExampleObject(
+                                            name = "providerModelMismatch",
+                                            summary = "Providerとmodelの不一致",
+                                            value = OpenApiExamples.BAD_REQUEST_PROVIDER_MODEL
+                                    ),
+                                    @ExampleObject(
+                                            name = "anthropicMessagesRequired",
+                                            summary = "Anthropic向け会話メッセージの不足",
+                                            value = OpenApiExamples.BAD_REQUEST_ANTHROPIC_MESSAGES
                                     )
                             }
                     )

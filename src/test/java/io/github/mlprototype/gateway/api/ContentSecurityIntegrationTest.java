@@ -206,11 +206,23 @@ class ContentSecurityIntegrationTest {
         ResponseEntity<JsonNode> response = restTemplate.getForEntity("/v3/api-docs", JsonNode.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        JsonNode responses = response.getBody()
+        JsonNode operation = response.getBody()
                 .path("paths")
                 .path("/v1/chat/completions")
-                .path("post")
-                .path("responses");
+                .path("post");
+        JsonNode responses = operation.path("responses");
+
+        JsonNode requestExamples = operation.path("requestBody")
+                .path("content")
+                .path("application/json")
+                .path("examples");
+        JsonNode openAiRequest = parseExampleValue(requestExamples.path("openAiRequest").path("value"));
+        JsonNode anthropicRequest = parseExampleValue(requestExamples.path("anthropicRequest").path("value"));
+        assertThat(openAiRequest.path("model").asText()).isEqualTo("gpt-4o-mini");
+        assertThat(anthropicRequest.path("model").asText())
+                .isEqualTo("claude-haiku-4-5-20251001");
+        assertThat(anthropicRequest.path("messages").path(1).path("role").asText())
+                .isEqualTo("user");
 
         JsonNode success = exampleValue(responses, "200", "chatCompletion");
         assertThat(success.path("choices").path(0).path("message").path("role").asText())
@@ -220,6 +232,8 @@ class ContentSecurityIntegrationTest {
 
         assertExample(responses, "400", "validationError", 400, "Bad Request");
         assertExample(responses, "400", "piiBlocked", 400, "Bad Request");
+        assertExample(responses, "400", "providerModelMismatch", 400, "Bad Request");
+        assertExample(responses, "400", "anthropicMessagesRequired", 400, "Bad Request");
         assertExample(responses, "401", "invalidApiKey", 401, "Unauthorized");
         assertExample(responses, "403", "tenantSuspended", 403, "Forbidden");
         assertExample(responses, "403", "promptInjectionBlocked", 403, "Forbidden");
@@ -252,9 +266,13 @@ class ContentSecurityIntegrationTest {
                 .path("examples")
                 .path(exampleName)
                 .path("value");
-        JsonNode value = example.isTextual() ? objectMapper.readTree(example.textValue()) : example;
+        JsonNode value = parseExampleValue(example);
 
         assertThat(value.isMissingNode()).isFalse();
         return value;
+    }
+
+    private JsonNode parseExampleValue(JsonNode example) throws Exception {
+        return example.isTextual() ? objectMapper.readTree(example.textValue()) : example;
     }
 }

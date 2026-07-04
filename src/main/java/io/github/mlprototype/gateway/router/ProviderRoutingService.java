@@ -31,6 +31,7 @@ public class ProviderRoutingService {
     private final FallbackPolicy fallbackPolicy;
     private final CircuitBreakerProviderInvoker circuitBreakerProviderInvoker;
     private final GatewayMetrics gatewayMetrics;
+    private final ProviderRequestPolicy providerRequestPolicy;
 
     /**
      * プライマリプロバイダーへのリクエスト実行と、必要に応じたフォールバック処理を調整する関数です。
@@ -43,6 +44,7 @@ public class ProviderRoutingService {
             String requestedProviderHeader,
             String legacyProviderHeader) {
         ProviderType requestedProvider = resolveRequestedProvider(requestedProviderHeader, legacyProviderHeader);
+        providerRequestPolicy.validatePrimary(request, requestedProvider);
         LlmProvider primaryProvider = providerRegistry.find(requestedProvider)
                 .orElseThrow(() -> ProviderRoutingException.serviceUnavailable(
                         "Provider not registered: " + requestedProvider.getValue(),
@@ -96,6 +98,14 @@ public class ProviderRoutingService {
                         primaryFailure.getFailureType(),
                         primaryFailure.getFailureType()));
 
+        if (!providerRequestPolicy.canFallback(request, fallbackType)) {
+            throw ProviderRoutingException.fromPrimaryFailure(
+                    requestedProvider,
+                    primaryProvider.getType(),
+                    primaryFailure);
+        }
+        ChatRequest fallbackRequest = providerRequestPolicy.prepareFallback(request, fallbackType);
+
         log.warn("provider_fallback {}",
                 StructuredArguments.entries(structuredFields(
                         requestedProvider.getValue(),
@@ -106,7 +116,7 @@ public class ProviderRoutingService {
                         null)));
 
         try {
-            ChatResponse response = circuitBreakerProviderInvoker.invoke(fallbackProvider, request);
+            ChatResponse response = circuitBreakerProviderInvoker.invoke(fallbackProvider, fallbackRequest);
             gatewayMetrics.incrementFallbackSuccess(
                     primaryProvider.getType().getValue(),
                     fallbackProvider.getType().getValue(),
@@ -190,4 +200,3 @@ public class ProviderRoutingService {
         return fields;
     }
 }
-

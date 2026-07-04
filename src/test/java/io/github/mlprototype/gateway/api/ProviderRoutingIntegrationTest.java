@@ -115,7 +115,7 @@ class ProviderRoutingIntegrationTest {
         ANTHROPIC_SERVER.enqueue(jsonResponse(200, """
                 {
                   "id": "msg_123",
-                  "model": "claude-3-haiku-20240307",
+                  "model": "claude-haiku-4-5-20251001",
                   "content": [{"type":"text","text":"fallback-ok"}],
                   "stop_reason": "end_turn",
                   "usage": {"input_tokens": 4, "output_tokens": 2}
@@ -147,7 +147,8 @@ class ProviderRoutingIntegrationTest {
                 .andExpect(status().isBadGateway())
                 .andExpect(header().string(GatewayHeaders.REQUESTED_PROVIDER_HEADER, "openai"))
                 .andExpect(header().string(GatewayHeaders.PROVIDER_HEADER, "openai"))
-                .andExpect(header().string(GatewayHeaders.FALLBACK_USED_HEADER, "false"));
+                .andExpect(header().string(GatewayHeaders.FALLBACK_USED_HEADER, "false"))
+                .andExpect(jsonPath("$.message").value("openai client error: 400 - bad request"));
 
         org.assertj.core.api.Assertions.assertThat(ANTHROPIC_SERVER.getRequestCount())
                 .isEqualTo(anthropicRequestsBefore);
@@ -160,7 +161,7 @@ class ProviderRoutingIntegrationTest {
         ANTHROPIC_SERVER.enqueue(jsonResponse(200, """
                 {
                   "id": "msg_456",
-                  "model": "claude-3-haiku-20240307",
+                  "model": "claude-haiku-4-5-20251001",
                   "content": [{"type":"text","text":"breaker-fallback"}],
                   "stop_reason": "end_turn",
                   "usage": {"input_tokens": 4, "output_tokens": 2}
@@ -179,6 +180,76 @@ class ProviderRoutingIntegrationTest {
 
         org.assertj.core.api.Assertions.assertThat(OPENAI_SERVER.getRequestCount())
                 .isEqualTo(openAiRequestsBefore);
+    }
+
+    @Test
+    void anthropicRequest_withCompatibleModelAndUserMessage_returns200() throws Exception {
+        ANTHROPIC_SERVER.enqueue(jsonResponse(200, """
+                {
+                  "id": "msg_anthropic",
+                  "model": "claude-haiku-4-5-20251001",
+                  "content": [{"type":"text","text":"こんにちは。お手伝いします。"}],
+                  "stop_reason": "end_turn",
+                  "usage": {"input_tokens": 8, "output_tokens": 6}
+                }
+                """));
+
+        mockMvc.perform(post("/v1/chat/completions")
+                        .contentType("application/json")
+                        .header("X-API-Key", "test-gateway-key")
+                        .header(GatewayHeaders.REQUESTED_PROVIDER_HEADER, "anthropic")
+                        .content("""
+                                {
+                                  "model": "claude-haiku-4-5-20251001",
+                                  "messages": [{"role": "user", "content": "こんにちは"}],
+                                  "max_tokens": 32
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(header().string(GatewayHeaders.PROVIDER_HEADER, "anthropic"))
+                .andExpect(header().string(GatewayHeaders.FALLBACK_USED_HEADER, "false"))
+                .andExpect(jsonPath("$.choices[0].message.content").value("こんにちは。お手伝いします。"));
+    }
+
+    @Test
+    void anthropicRequest_withOpenAiModel_returns400BeforeProviderCall() throws Exception {
+        int requestsBefore = ANTHROPIC_SERVER.getRequestCount();
+
+        mockMvc.perform(post("/v1/chat/completions")
+                        .contentType("application/json")
+                        .header("X-API-Key", "test-gateway-key")
+                        .header(GatewayHeaders.REQUESTED_PROVIDER_HEADER, "anthropic")
+                        .content(requestBody()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("Bad Request"))
+                .andExpect(jsonPath("$.message").value(
+                        "Model 'gpt-4o-mini' is not compatible with provider 'anthropic'"));
+
+        org.assertj.core.api.Assertions.assertThat(ANTHROPIC_SERVER.getRequestCount())
+                .isEqualTo(requestsBefore);
+    }
+
+    @Test
+    void anthropicRequest_withOnlySystemMessage_returns400BeforeProviderCall() throws Exception {
+        int requestsBefore = ANTHROPIC_SERVER.getRequestCount();
+
+        mockMvc.perform(post("/v1/chat/completions")
+                        .contentType("application/json")
+                        .header("X-API-Key", "test-gateway-key")
+                        .header(GatewayHeaders.REQUESTED_PROVIDER_HEADER, "anthropic")
+                        .content("""
+                                {
+                                  "model": "claude-haiku-4-5-20251001",
+                                  "messages": [{"role": "system", "content": "簡潔に答えてください"}],
+                                  "max_tokens": 32
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(
+                        "Anthropic requests require at least one user or assistant message"));
+
+        org.assertj.core.api.Assertions.assertThat(ANTHROPIC_SERVER.getRequestCount())
+                .isEqualTo(requestsBefore);
     }
 
     private static MockWebServer startServer() {

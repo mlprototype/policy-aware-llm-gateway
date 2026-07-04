@@ -18,18 +18,26 @@ import java.net.UnknownHostException;
 public class ProviderFailureClassifier {
 
     public ProviderException upstream4xx(ProviderType providerType, int upstreamStatusCode) {
+        return upstream4xx(providerType, upstreamStatusCode, null);
+    }
+
+    public ProviderException upstream4xx(ProviderType providerType, int upstreamStatusCode, String detail) {
         return new Upstream4xxProviderException(
                 providerType,
                 upstreamStatusCode,
-                providerType.getValue() + " client error: " + upstreamStatusCode);
+                providerMessage(providerType, "client error", upstreamStatusCode, detail));
     }
 
     public ProviderException upstream5xx(ProviderType providerType, int upstreamStatusCode) {
+        return upstream5xx(providerType, upstreamStatusCode, null);
+    }
+
+    public ProviderException upstream5xx(ProviderType providerType, int upstreamStatusCode, String detail) {
         return new ProviderException(
                 providerType,
                 ProviderFailureType.UPSTREAM_5XX,
                 upstreamStatusCode,
-                providerType.getValue() + " server error: " + upstreamStatusCode);
+                providerMessage(providerType, "server error", upstreamStatusCode, detail));
     }
 
     public ProviderException classifyClientException(ProviderType providerType, RestClientException exception) {
@@ -79,5 +87,14 @@ public class ProviderFailureClassifier {
             current = current.getCause();
         }
         return false;
+    }
+
+    private String providerMessage(
+            ProviderType providerType,
+            String failure,
+            int upstreamStatusCode,
+            String detail) {
+        String message = providerType.getValue() + " " + failure + ": " + upstreamStatusCode;
+        return detail == null || detail.isBlank() ? message : message + " - " + detail;
     }
 }

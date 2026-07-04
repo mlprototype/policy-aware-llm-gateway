@@ -18,13 +18,13 @@ import java.time.Instant;
 @AllArgsConstructor
 public class ErrorResponse {
 
-    @Schema(description = "HTTP ステータスコード。", example = "401")
+    @Schema(description = "HTTP ステータスコード。", example = "400")
     private int status;
 
-    @Schema(description = "HTTP エラー種別。", example = "Unauthorized")
+    @Schema(description = "HTTP エラー種別。", example = "Bad Request")
     private String error;
 
-    @Schema(description = "エラー内容。", example = "Invalid or missing API key")
+    @Schema(description = "エラー内容。", example = "Request could not be processed")
     private String message;
 
     @JsonProperty("trace_id")

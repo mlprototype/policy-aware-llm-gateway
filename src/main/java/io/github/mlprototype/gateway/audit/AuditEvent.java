@@ -37,6 +37,8 @@ public class AuditEvent {
     private final Boolean injectionDetected;
     private final String injectionAction;
     private final String injectionRules;
+    private final Integer injectionScore;
+    private final String injectionCategories;
     private final String requestHash;
     private final String requestPreview;
 }

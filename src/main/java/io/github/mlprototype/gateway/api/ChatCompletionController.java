@@ -66,26 +66,18 @@ public class ChatCompletionController {
                     content = @Content(
                             mediaType = "application/json",
                             schema = @Schema(implementation = ChatRequest.class),
-                            examples = @ExampleObject(
-                                    name = "日本語リクエスト",
-                                    value = """
-                                            {
-                                              "model": "gpt-4o-mini",
-                                              "messages": [
-                                                {
-                                                  "role": "system",
-                                                  "content": "あなたは優秀なカスタマーサポートアシスタントです。ユーザーからの問い合わせ内容を分析し、対応優先度（高/中/低）と要約を簡潔な日本語で出力してください。"
-                                                },
-                                                {
-                                                  "role": "user",
-                                                  "content": "【問い合わせ内容】システム移行後から管理画面にログインできなくなりました。「認証エラー」と表示されます。業務への影響が大きいため、至急原因と対策をご連絡ください。"
-                                                }
-                                              ],
-                                              "temperature": 0.2,
-                                              "max_tokens": 512
-                                            }
-                                            """
-                            )
+                            examples = {
+                                    @ExampleObject(
+                                            name = "openAiRequest",
+                                            summary = "OpenAI向け日本語リクエスト",
+                                            value = OpenApiExamples.CHAT_REQUEST_OPENAI
+                                    ),
+                                    @ExampleObject(
+                                            name = "anthropicRequest",
+                                            summary = "Anthropic向け日本語リクエスト",
+                                            value = OpenApiExamples.CHAT_REQUEST_ANTHROPIC
+                                    )
+                            }
                     )
             )
     )
@@ -93,37 +85,131 @@ public class ChatCompletionController {
             @ApiResponse(
                     responseCode = "200",
                     description = "チャット補完の生成に成功",
-                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = ChatResponse.class))
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = ChatResponse.class),
+                            examples = @ExampleObject(
+                                    name = "chatCompletion",
+                                    summary = "日本語でのチャット補完結果",
+                                    value = OpenApiExamples.CHAT_COMPLETION_SUCCESS
+                            )
+                    )
             ),
             @ApiResponse(
                     responseCode = "400",
-                    description = "リクエスト形式が不正、またはセキュリティポリシーによりブロック",
-                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))
+                    description = "リクエスト形式が不正、または PII ポリシーによりブロック",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = ErrorResponse.class),
+                            examples = {
+                                    @ExampleObject(
+                                            name = "validationError",
+                                            summary = "リクエストのバリデーションエラー",
+                                            value = OpenApiExamples.BAD_REQUEST_VALIDATION
+                                    ),
+                                    @ExampleObject(
+                                            name = "piiBlocked",
+                                            summary = "PII ポリシーによるブロック",
+                                            value = OpenApiExamples.BAD_REQUEST_PII_BLOCK
+                                    ),
+                                    @ExampleObject(
+                                            name = "providerModelMismatch",
+                                            summary = "Providerとmodelの不一致",
+                                            value = OpenApiExamples.BAD_REQUEST_PROVIDER_MODEL
+                                    ),
+                                    @ExampleObject(
+                                            name = "anthropicMessagesRequired",
+                                            summary = "Anthropic向け会話メッセージの不足",
+                                            value = OpenApiExamples.BAD_REQUEST_ANTHROPIC_MESSAGES
+                                    )
+                            }
+                    )
             ),
             @ApiResponse(
                     responseCode = "401",
                     description = "API Key が未指定、または不正",
-                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = ErrorResponse.class),
+                            examples = @ExampleObject(
+                                    name = "invalidApiKey",
+                                    summary = "API Key が未指定、または不正",
+                                    value = OpenApiExamples.UNAUTHORIZED
+                            )
+                    )
             ),
             @ApiResponse(
                     responseCode = "403",
-                    description = "認証済みだが Gateway の利用が許可されていない",
-                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))
+                    description = "認証済みだが Gateway の利用が許可されていない、または Prompt Injection ポリシーによりブロック",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = ErrorResponse.class),
+                            examples = {
+                                    @ExampleObject(
+                                            name = "tenantSuspended",
+                                            summary = "テナントが停止状態",
+                                            value = OpenApiExamples.FORBIDDEN_TENANT_SUSPENDED
+                                    ),
+                                    @ExampleObject(
+                                            name = "promptInjectionBlocked",
+                                            summary = "Prompt Injection ポリシーによるブロック",
+                                            value = OpenApiExamples.FORBIDDEN_INJECTION_BLOCK
+                                    )
+                            }
+                    )
             ),
             @ApiResponse(
                     responseCode = "429",
                     description = "レートリミット超過",
-                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = ErrorResponse.class),
+                            examples = @ExampleObject(
+                                    name = "rateLimitExceeded",
+                                    summary = "テナントのリクエスト上限超過",
+                                    value = OpenApiExamples.RATE_LIMIT_EXCEEDED
+                            )
+                    )
             ),
             @ApiResponse(
                     responseCode = "502",
                     description = "プロバイダの upstream エラー、または不正なレスポンス",
-                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = ErrorResponse.class),
+                            examples = {
+                                    @ExampleObject(
+                                            name = "upstreamError",
+                                            summary = "プロバイダの upstream エラー",
+                                            value = OpenApiExamples.BAD_GATEWAY_UPSTREAM
+                                    ),
+                                    @ExampleObject(
+                                            name = "invalidProviderResponse",
+                                            summary = "プロバイダレスポンスが不正",
+                                            value = OpenApiExamples.BAD_GATEWAY_INVALID_RESPONSE
+                                    )
+                            }
+                    )
             ),
             @ApiResponse(
                     responseCode = "503",
                     description = "プロバイダ利用不可、タイムアウト、または Circuit Breaker open",
-                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = ErrorResponse.class),
+                            examples = {
+                                    @ExampleObject(
+                                            name = "providerTimeout",
+                                            summary = "プロバイダ呼び出しがタイムアウト",
+                                            value = OpenApiExamples.SERVICE_UNAVAILABLE_TIMEOUT
+                                    ),
+                                    @ExampleObject(
+                                            name = "circuitBreakerOpen",
+                                            summary = "Circuit Breaker が open",
+                                            value = OpenApiExamples.SERVICE_UNAVAILABLE_CIRCUIT_BREAKER
+                                    )
+                            }
+                    )
             )
     })
     public ResponseEntity<ChatResponse> createChatCompletion(
@@ -165,6 +251,8 @@ public class ChatCompletionController {
                     .injectionDetected(ex.getDecision().injectionResult().detected())
                     .injectionAction(ex.getDecision().injectionAction().name())
                     .injectionRules(ex.getDecision().injectionResult().matchedRules().toString())
+                    .injectionScore(ex.getDecision().injectionResult().score())
+                    .injectionCategories(formatInjectionCategories(ex.getDecision().injectionResult()))
                     .requestHash(ex.getRequestHash())
                     .requestPreview(ex.getSanitizedPreview())
                     .build());
@@ -208,6 +296,8 @@ public class ChatCompletionController {
                     .injectionDetected(securityResult.decision().injectionResult().detected())
                     .injectionAction(securityResult.decision().injectionAction().name())
                     .injectionRules(securityResult.decision().injectionResult().matchedRules().toString())
+                    .injectionScore(securityResult.decision().injectionResult().score())
+                    .injectionCategories(formatInjectionCategories(securityResult.decision().injectionResult()))
                     .requestHash(securityResult.requestHash())
                     .requestPreview(securityResult.sanitizedPreview())
                     .build());
@@ -242,11 +332,19 @@ public class ChatCompletionController {
                     .injectionDetected(securityResult.decision().injectionResult().detected())
                     .injectionAction(securityResult.decision().injectionAction().name())
                     .injectionRules(securityResult.decision().injectionResult().matchedRules().toString())
+                    .injectionScore(securityResult.decision().injectionResult().score())
+                    .injectionCategories(formatInjectionCategories(securityResult.decision().injectionResult()))
                     .requestHash(securityResult.requestHash())
                     .requestPreview(securityResult.sanitizedPreview())
                     .build());
 
             throw exception;
         }
+    }
+
+    private String formatInjectionCategories(io.github.mlprototype.gateway.content.InjectionDetectionResult result) {
+        return result.categories().stream()
+                .map(Enum::name)
+                .collect(java.util.stream.Collectors.joining(","));
     }
 }

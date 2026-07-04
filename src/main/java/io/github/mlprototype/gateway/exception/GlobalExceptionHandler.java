@@ -71,14 +71,22 @@ public class GlobalExceptionHandler {
 
         ErrorResponse body = ErrorResponse.builder()
                 .status(ex.getStatusCode())
-                .error("Bad Request")
+                .error(httpError(ex.getStatusCode()))
                 .message(ex.getMessage())
                 .traceId(MDC.get(TRACE_ID_KEY))
                 .build();
 
         HttpHeaders headers = new HttpHeaders();
-        headers.add("X-Gateway-Security-Blocked", "true");
-        headers.add("X-Gateway-Block-Reason", ex.getBlockReason());
+        headers.add(GatewayHeaders.SECURITY_BLOCKED_HEADER, "true");
+        headers.add(GatewayHeaders.BLOCK_REASON_HEADER, ex.getBlockReason());
+        if ("INJECTION_DETECTED".equals(ex.getBlockReason())) {
+            var injectionResult = ex.getDecision().injectionResult();
+            headers.add(GatewayHeaders.SECURITY_SCORE_HEADER, String.valueOf(injectionResult.score()));
+            headers.add(GatewayHeaders.SECURITY_CATEGORIES_HEADER,
+                    injectionResult.categories().stream()
+                            .map(Enum::name)
+                            .collect(java.util.stream.Collectors.joining(",")));
+        }
 
         return ResponseEntity.status(ex.getStatusCode()).headers(headers).body(body);
     }

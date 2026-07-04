@@ -45,7 +45,7 @@ public class ContentSecurityService {
         if (request == null || request.getMessages() == null) {
             return new ContentSecurityResult(
                     new SecurityDecision(new PiiDetectionResult(false, List.of()), piiAction,
-                            new InjectionDetectionResult(false, List.of()), injectionAction),
+                            InjectionDetectionResult.none(), injectionAction),
                     request,
                     "",
                     "");
@@ -70,8 +70,8 @@ public class ContentSecurityService {
         }
         if (injectionResult.detected() && injectionAction == InjectionAction.BLOCK) {
             gatewayMetrics.incrementSecurityBlock("injection");
-            // 同様に、プロンプトインジェクション攻撃など、クライアントの入力内容の不備として扱うため、HTTPステータス400を指定しています。
-            throw new SecurityBlockException("INJECTION_DETECTED", decision, 400, sanitizedPreview, requestHash);
+            // Prompt Injection は認証済み利用者によるポリシー違反として 403 を返します。
+            throw new SecurityBlockException("INJECTION_DETECTED", decision, 403, sanitizedPreview, requestHash);
         }
         
         if (injectionResult.detected() && injectionAction == InjectionAction.WARN) {

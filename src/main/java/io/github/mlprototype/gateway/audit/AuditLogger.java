@@ -55,6 +55,8 @@ public class AuditLogger {
                     .injectionDetected(event.getInjectionDetected() != null ? event.getInjectionDetected() : false)
                     .injectionAction(event.getInjectionAction())
                     .injectionRules(event.getInjectionRules())
+                    .injectionScore(event.getInjectionScore())
+                    .injectionCategories(event.getInjectionCategories())
                     .requestHash(event.getRequestHash())
                     .requestPreview(event.getRequestPreview())
                     .build();
@@ -110,6 +112,8 @@ public class AuditLogger {
             map.put("injection_detected", event.getInjectionDetected());
             if (event.getInjectionAction() != null) map.put("injection_action", event.getInjectionAction());
             if (event.getInjectionRules() != null) map.put("injection_rules", event.getInjectionRules());
+            if (event.getInjectionScore() != null) map.put("injection_score", event.getInjectionScore());
+            if (event.getInjectionCategories() != null) map.put("injection_categories", event.getInjectionCategories());
         }
         if (event.getRequestHash() != null) map.put("request_hash", event.getRequestHash());
         if (event.getRequestPreview() != null) map.put("request_preview", event.getRequestPreview());
@@ -117,4 +121,3 @@ public class AuditLogger {
         return map;
     }
 }
-

@@ -136,6 +136,8 @@ AWS 上の構成、CI/CD、Secrets 管理、Zero-Idle 設計の詳細は以下�
 | `X-RateLimit-Remaining` | 現在の 1 分間における残りリクエスト可能数 |
 | `X-Gateway-Security-Blocked` | セキュリティポリシー違反によりブロックされた場合 (`true`) |
 | `X-Gateway-Block-Reason` | ブロック理由 (`PII_DETECTED`, `INJECTION_DETECTED`) |
+| `X-Gateway-Security-Score` | Prompt Injection BLOCK 時の検知スコア |
+| `X-Gateway-Security-Categories` | Prompt Injection BLOCK 時に一致したカテゴリ（カンマ区切り） |
 
 ---
 
@@ -332,13 +334,15 @@ OpenAI Chat Completions API 互換エンドポイント。
 
 **Cost Safety:** `max_tokens` は Gateway 側で上限 4096 にクランプされます。
 
+`model` を指定する場合は選択した Provider と互換性のあるモデル名が必要です。OpenAIモデルを Anthropic に指定するなどの不一致は、Provider 呼び出し前に `400 Bad Request` として拒否します。`model` を省略した場合は Provider ごとのデフォルトモデルを使用します。Anthropicでは `system` 以外に、最低1件の `user` または `assistant` メッセージが必要です。
+
 **Migration Note:** request header は `X-Gateway-Requested-Provider` が正です。`X-Gateway-Provider` を request で送る形式は後方互換のため一時的に許可しています。両方送信して値が不一致の場合は `400 Bad Request` を返します。
 
 ### HTTP Semantics
 
-- `400 Bad Request`: 無効なリクエスト形式、またはセキュリティポリシー違反（PII/インジェクションによるブロック）
+- `400 Bad Request`: 無効なリクエスト形式、Provider/modelの不一致、または PII BLOCK
 - `401 Unauthorized`: APIキーの欠落または無効
-- `403 Forbidden`: 認証済みだが、テナントが一時停止状態
+- `403 Forbidden`: 認証済みだが、テナントが一時停止状態、または Prompt Injection BLOCK
 - `429 Too Many Requests`: テナントのレートリミット（利用上限）超過
 - `502 Bad Gateway`: アップストリーム（LLMプロバイダ）の 4xx / 5xx エラー、または無効なレスポンス
 - `503 Service Unavailable`: タイムアウト / 接続エラー / サーキットブレーカーのオープン状態
@@ -350,15 +354,20 @@ OpenAI Chat Completions API 互換エンドポイント。
 - **`ALLOW`**: 何もせず通過。
 - **`WARN`**: リクエストは通過するが、監査ログに検知フラグを立てて記録。
 - **`MASK`**: (PII専用) リクエスト本文の該当文字列を `[EMAIL_REDACTED]` などにマスクして Provider へ送信。
-- **`BLOCK`**: 400 Bad Request で遮断。アップストリームへは送信しない。
+- **`BLOCK`**: PII は 400 Bad Request、Prompt Injection は 403 Forbidden で遮断。アップストリームへは送信しない。
 
 デフォルトでは PII は `MASK`、プロンプトインジェクションは `BLOCK` です。テナントの `pii_action` / `injection_action` が DB で設定されている場合は、テナント設定が優先されます。
+
+Prompt Injection Detection は NFKC・小文字化・format character 除去・空白正規化を行い、通常テキストと空白除去テキストの両方へカテゴリ別ルールを適用します。同一ルールはリクエスト内で一度だけ加点し、合計スコアが 70 以上の場合に Prompt Injection と判定します。`injection_action=BLOCK` の場合は Provider へ送信せず、403 Forbidden で遮断します。
+
+監査ログには `injection_detected`、`injection_action`、`injection_rules`、`injection_score`、`injection_categories` を保存します。一致したユーザー入力そのものはルール情報として保存しません。
 
 > **Note:** PII BLOCK の優先順位は最上位となります。同一リクエスト内で PII とインジェクションが検知された場合、PII のアクションが BLOCK であれば即時エラーとなります。
 
 ### Degraded Mode
 
 - fallback は 1 段のみです。`openai -> anthropic`、`anthropic -> openai`
+- fallback先と元のモデルに互換性がない場合は、fallback先のデフォルトモデルを使用します
 - fallback 対象は `timeout`, `connection error`, `upstream 5xx`, `breaker-open`
 - provider 4xx は fallback しません
 - `INVALID_RESPONSE` は upstream schema drift と mapper 不整合の両方を含み得るため、Sprint 3 では安全側で fallback 対象外にしています

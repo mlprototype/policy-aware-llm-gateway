@@ -3,6 +3,7 @@ package io.github.mlprototype.gateway.router;
 import io.github.mlprototype.gateway.config.ProviderRoutingProperties;
 import io.github.mlprototype.gateway.dto.ChatRequest;
 import io.github.mlprototype.gateway.dto.ChatResponse;
+import io.github.mlprototype.gateway.dto.Message;
 import io.github.mlprototype.gateway.exception.ProviderException;
 import io.github.mlprototype.gateway.exception.ProviderFailureType;
 import io.github.mlprototype.gateway.exception.ProviderRoutingException;
@@ -20,6 +21,8 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -48,7 +51,8 @@ class ProviderRoutingServiceTest {
                 properties,
                 new FallbackPolicy(),
                 circuitBreakerProviderInvoker,
-                gatewayMetrics);
+                gatewayMetrics,
+                new ProviderRequestPolicy());
     }
 
     @Test
@@ -72,7 +76,8 @@ class ProviderRoutingServiceTest {
                         ProviderFailureType.TIMEOUT,
                         null,
                         "Timed out calling openai"));
-        when(circuitBreakerProviderInvoker.invoke(anthropicProvider, request))
+        when(circuitBreakerProviderInvoker.invoke(eq(anthropicProvider),
+                argThat(fallbackRequest -> fallbackRequest.getModel() == null)))
                 .thenReturn(response("anthropic-model"));
 
         ProviderExecutionResult result = providerRoutingService.execute(request, "openai", null);
@@ -107,8 +112,35 @@ class ProviderRoutingServiceTest {
                 .isEqualTo(400);
     }
 
+    @Test
+    void execute_anthropicWithOpenAiModel_returnsBadRequestBeforeProviderCall() {
+        assertThatThrownBy(() -> providerRoutingService.execute(request(), "anthropic", null))
+                .isInstanceOf(ProviderRoutingException.class)
+                .hasMessageContaining("gpt-4o-mini")
+                .hasMessageContaining("not compatible")
+                .extracting("statusCode")
+                .isEqualTo(400);
+    }
+
+    @Test
+    void execute_anthropicWithOnlySystemMessage_returnsBadRequest() {
+        ChatRequest request = ChatRequest.builder()
+                .model("claude-haiku-4-5-20251001")
+                .messages(List.of(new Message("system", "Be concise")))
+                .build();
+
+        assertThatThrownBy(() -> providerRoutingService.execute(request, "anthropic", null))
+                .isInstanceOf(ProviderRoutingException.class)
+                .hasMessageContaining("at least one user or assistant message")
+                .extracting("statusCode")
+                .isEqualTo(400);
+    }
+
     private ChatRequest request() {
-        return ChatRequest.builder().model("gpt-4o-mini").build();
+        return ChatRequest.builder()
+                .model("gpt-4o-mini")
+                .messages(List.of(new Message("user", "Hello")))
+                .build();
     }
 
     private ChatResponse response(String model) {

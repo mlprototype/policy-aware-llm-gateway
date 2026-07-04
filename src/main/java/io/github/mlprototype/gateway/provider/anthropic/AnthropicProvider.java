@@ -4,6 +4,7 @@ import io.github.mlprototype.gateway.dto.ChatRequest;
 import io.github.mlprototype.gateway.dto.ChatResponse;
 import io.github.mlprototype.gateway.exception.ProviderException;
 import io.github.mlprototype.gateway.provider.LlmProvider;
+import io.github.mlprototype.gateway.provider.ProviderErrorDetailExtractor;
 import io.github.mlprototype.gateway.provider.ProviderFailureClassifier;
 import io.github.mlprototype.gateway.provider.ProviderType;
 import lombok.extern.slf4j.Slf4j;
@@ -28,16 +29,19 @@ public class AnthropicProvider implements LlmProvider {
     private final AnthropicRequestMapper requestMapper;
     private final AnthropicResponseMapper responseMapper;
     private final ProviderFailureClassifier failureClassifier;
+    private final ProviderErrorDetailExtractor errorDetailExtractor;
 
     public AnthropicProvider(
             @Qualifier("anthropicRestClient") RestClient restClient,
             AnthropicRequestMapper requestMapper,
             AnthropicResponseMapper responseMapper,
-            ProviderFailureClassifier failureClassifier) {
+            ProviderFailureClassifier failureClassifier,
+            ProviderErrorDetailExtractor errorDetailExtractor) {
         this.restClient = restClient;
         this.requestMapper = requestMapper;
         this.responseMapper = responseMapper;
         this.failureClassifier = failureClassifier;
+        this.errorDetailExtractor = errorDetailExtractor;
     }
 
     @Override
@@ -57,10 +61,16 @@ public class AnthropicProvider implements LlmProvider {
                     .body(anthropicRequest)
                     .retrieve()
                     .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
-                        throw failureClassifier.upstream4xx(ProviderType.ANTHROPIC, res.getStatusCode().value());
+                        throw failureClassifier.upstream4xx(
+                                ProviderType.ANTHROPIC,
+                                res.getStatusCode().value(),
+                                errorDetailExtractor.extract(res));
                     })
                     .onStatus(HttpStatusCode::is5xxServerError, (req, res) -> {
-                        throw failureClassifier.upstream5xx(ProviderType.ANTHROPIC, res.getStatusCode().value());
+                        throw failureClassifier.upstream5xx(
+                                ProviderType.ANTHROPIC,
+                                res.getStatusCode().value(),
+                                errorDetailExtractor.extract(res));
                     })
                     .body(new ParameterizedTypeReference<>() {});
 

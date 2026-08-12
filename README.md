@@ -358,7 +358,7 @@ OpenAI Chat Completions API 互換エンドポイント。
 
 デフォルトでは PII は `MASK`、プロンプトインジェクションは `BLOCK` です。テナントの `pii_action` / `injection_action` が DB で設定されている場合は、テナント設定が優先されます。
 
-Prompt Injection Detection は NFKC・小文字化・format character 除去・空白正規化を行い、通常テキストと空白除去テキストの両方へカテゴリ別ルールを適用します。同一ルールはリクエスト内で一度だけ加点し、合計スコアが 70 以上の場合に Prompt Injection と判定します。`injection_action=BLOCK` の場合は Provider へ送信せず、403 Forbidden で遮断します。
+Prompt Injection Detection は NFKC・小文字化・format character 除去・空白正規化を行い、通常テキストと空白除去テキストの両方へカテゴリ別ルールを適用します。同一ルールはリクエスト内で一度だけ加点し、合計スコアが 70 以上、またはシステムプロンプト抽出・秘密情報窃取の高確度ルールに一致した場合に Prompt Injection と判定します。`injection_action=BLOCK` の場合は Provider へ送信せず、403 Forbidden で遮断します。
 
 監査ログには `injection_detected`、`injection_action`、`injection_rules`、`injection_score`、`injection_categories` を保存します。一致したユーザー入力そのものはルール情報として保存しません。
 

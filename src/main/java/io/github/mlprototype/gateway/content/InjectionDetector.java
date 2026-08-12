@@ -25,28 +25,28 @@ public class InjectionDetector {
 
     public InjectionDetector() {
         rules = List.of(
-                rule("IGNORE_INSTRUCTIONS", InjectionCategory.INSTRUCTION_OVERRIDE, 40,
+                rule("IGNORE_INSTRUCTIONS", InjectionCategory.INSTRUCTION_OVERRIDE, 40, false,
                         "\\b(ignore|disregard|forget|override)\\b.{0,40}\\b(instruction|instructions|prompt|prompts|rule|rules|policy|policies|system|developer)\\b",
                         "(これまで|以前|上記|前|今まで).{0,20}(指示|命令|ルール|制約|プロンプト).{0,20}(無視|忘れ|破棄|解除|取り消|上書き)",
                         "(指示|命令|ルール|制約|プロンプト).{0,20}(無視|忘れ|破棄|解除|取り消|上書き)"),
-                rule("REVEAL_SYSTEM_PROMPT", InjectionCategory.SYSTEM_PROMPT_EXTRACTION, 45,
+                rule("REVEAL_SYSTEM_PROMPT", InjectionCategory.SYSTEM_PROMPT_EXTRACTION, 45, true,
                         "\\b(reveal|show|display|print|output|disclose)\\b.{0,40}\\b(system prompt|developer message|hidden prompt|hidden instruction|internal prompt|internal instruction)\\b",
-                        "(システムプロンプト|内部指示|隠された指示|開発者メッセージ|developer message).{0,30}(教え|表示|出力|見せ|開示|公開|全部|すべて)",
-                        "(あなたの|君の).{0,20}(システムプロンプト|内部設定|内部指示|隠されたプロンプト)"),
-                rule("BYPASS_POLICY", InjectionCategory.POLICY_BYPASS, 35,
+                        "(システムプロンプト|内部指示|隠された指示|開発者メッセージ|developer message).{0,30}(教え|表示|出力|見せ|開示|公開|全部|すべて)"),
+                rule("BYPASS_POLICY", InjectionCategory.POLICY_BYPASS, 35, false,
                         "\\b(bypass|circumvent|disable|remove)\\b.{0,40}\\b(safety|policy|policies|guardrail|filter|restriction|restrictions)\\b",
                         "(安全装置|安全制限|ポリシー|ガードレール|フィルター|制限).{0,20}(回避|無効化|解除|無視|バイパス)"),
-                rule("ROLE_MANIPULATION", InjectionCategory.ROLE_MANIPULATION, 30,
+                rule("ROLE_MANIPULATION", InjectionCategory.ROLE_MANIPULATION, 30, false,
                         "\\b(you are now|act as|pretend to be)\\b.{0,50}\\b(unrestricted|without (any )?restrictions?|no limits|no filter)\\b",
                         "(あなたは今から|今からあなたは).{0,30}(制限なく|無制限|何でもできる)",
                         "(制限なく|無制限の|何でもできる).{0,20}(ai|アシスタント|キャラクター|として振る舞|になりきっ)"),
-                rule("JAILBREAK_PATTERN", InjectionCategory.JAILBREAK, 40,
+                rule("JAILBREAK_PATTERN", InjectionCategory.JAILBREAK, 40, false,
                         "\\b(dan|do anything now|jailbreak|developer mode)\\b",
                         "(開発者モード|ジェイルブレイク|脱獄|dan)"),
-                rule("SECRET_EXFILTRATION", InjectionCategory.SECRET_EXFILTRATION, 50,
+                rule("SECRET_EXFILTRATION", InjectionCategory.SECRET_EXFILTRATION, 50, true,
                         "\\b(api key|secret|token|password|credential|credentials|env|environment variable)\\b.{0,40}\\b(show|print|reveal|disclose|output)\\b",
+                        "\\b(show|print|reveal|disclose|output)\\b.{0,40}\\b(api key|secret|token|password|credential|credentials|env|environment variable)\\b",
                         "(apiキー|秘密鍵|トークン|パスワード|認証情報|環境変数).{0,30}(教え|表示|出力|開示|公開)"),
-                rule("OBFUSCATION", InjectionCategory.OBFUSCATION, 30,
+                rule("OBFUSCATION", InjectionCategory.OBFUSCATION, 30, false,
                         "\\b(base64|rot13|unicode escape|hex encode|decode this)\\b",
                         "(base64|rot13|unicode|ユニコード|16進|デコード|復号).{0,30}(して|実行|読んで)")
         );
@@ -80,7 +80,11 @@ public class InjectionDetector {
             for (InjectionRuleDefinition rule : rules) {
                 if (!matchesByRuleId.containsKey(rule.id()) && matches(rule, normalized)) {
                     matchesByRuleId.put(rule.id(),
-                            new InjectionRuleMatch(rule.id(), rule.category(), rule.score()));
+                            new InjectionRuleMatch(
+                                    rule.id(),
+                                    rule.category(),
+                                    rule.score(),
+                                    rule.detectOnMatch()));
                 }
             }
         }
@@ -91,9 +95,10 @@ public class InjectionDetector {
                 .map(InjectionRuleMatch::category)
                 .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new)));
         List<String> matchedRules = matches.stream().map(InjectionRuleMatch::ruleId).toList();
+        boolean highConfidenceMatch = matches.stream().anyMatch(InjectionRuleMatch::detectOnMatch);
 
         return new InjectionDetectionResult(
-                score >= BLOCK_THRESHOLD,
+                score >= BLOCK_THRESHOLD || highConfidenceMatch,
                 score,
                 categories,
                 matchedRules,
@@ -115,11 +120,16 @@ public class InjectionDetector {
         return new NormalizedText(content, normalizedText, compactText);
     }
 
-    private InjectionRuleDefinition rule(String id, InjectionCategory category, int score, String... patterns) {
+    private InjectionRuleDefinition rule(
+            String id,
+            InjectionCategory category,
+            int score,
+            boolean detectOnMatch,
+            String... patterns) {
         List<Pattern> compiledPatterns = java.util.Arrays.stream(patterns)
                 .map(pattern -> Pattern.compile(pattern, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE))
                 .toList();
-        return new InjectionRuleDefinition(id, category, score, compiledPatterns);
+        return new InjectionRuleDefinition(id, category, score, detectOnMatch, compiledPatterns);
     }
 
     private record NormalizedText(

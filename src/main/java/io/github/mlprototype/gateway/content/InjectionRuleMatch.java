@@ -6,6 +6,7 @@ package io.github.mlprototype.gateway.content;
 public record InjectionRuleMatch(
         String ruleId,
         InjectionCategory category,
-        int score
+        int score,
+        boolean detectOnMatch
 ) {
 }

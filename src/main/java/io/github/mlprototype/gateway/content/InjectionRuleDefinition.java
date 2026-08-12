@@ -10,6 +10,7 @@ public record InjectionRuleDefinition(
         String id,
         InjectionCategory category,
         int score,
+        boolean detectOnMatch,
         List<Pattern> patterns
 ) {
     public InjectionRuleDefinition {

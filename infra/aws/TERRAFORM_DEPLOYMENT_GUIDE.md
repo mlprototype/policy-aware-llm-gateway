@@ -87,7 +87,7 @@ aws secretsmanager put-secret-value \
   --secret-string '{
     "openai_api_key": "sk-proj-YOUR-ACTUAL-OPENAI-KEY",
     "anthropic_api_key": "sk-ant-YOUR-ACTUAL-ANTHROPIC-KEY",
-    "gateway_api_key": "dev-gateway-key-001"
+    "gateway_api_key": "YOUR-HIGH-ENTROPY-VERIFICATION-KEY"
   }'
 ```
 
@@ -249,3 +249,5 @@ GitHub Actionsが一時的な認証トークンを取得できるように、以
 }
 ```
 *(※ `<YOUR_AWS_ACCOUNT_ID>` や `<YOUR_GITHUB_ORGANIZATION_OR_USER>` は実際の環境に置き換えてください)*
+
+Gateway key は環境変数注入だけでは登録されません。AWS起動後の明示的Tenant / Client provisioningと認証済みchat確認は [Operations Runbook](../../docs/infra/OPERATIONS_RUNBOOK.md#authentication-provisioning) を参照してください。

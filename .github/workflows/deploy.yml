@@ -11,6 +11,7 @@ on:
       - 'settings.gradle'
       - 'gradle/**'
       - '.github/workflows/deploy.yml'
+      - 'scripts/**'
   workflow_dispatch:
 
 # 同一環境へ並行デプロイしてロールバック対象を取り違えないよう直列化する。
@@ -28,7 +29,6 @@ env:
   ECR_REPOSITORY: multi-llm-gateway-repo
   ECS_SERVICE: multi-llm-gateway-service
   ECS_CLUSTER: multi-llm-gateway-cluster
-  ECS_TASK_DEFINITION_NAME: multi-llm-gateway
 
 jobs:
   test:
@@ -72,6 +72,9 @@ jobs:
           SPRING_PROFILES_ACTIVE: test
           OPENAI_API_KEY: sk-test-dummy
           GATEWAY_API_KEY: test-gateway-key
+      - name: Verify ECS command success handling
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -v
+
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
@@ -143,8 +146,12 @@ jobs:
       - name: Record currently deployed revision
         id: previous
         run: |
-          echo "task_definition=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text)" >> "$GITHUB_OUTPUT"
-          echo "desired_count=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].desiredCount' --output text)" >> "$GITHUB_OUTPUT"
+          previous_definition=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text)
+          previous_count=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].desiredCount' --output text)
+          [[ "$previous_definition" == arn:*:ecs:*:task-definition/* ]] || { echo 'A valid rollback task definition is required.' >&2; exit 1; }
+          [[ "$previous_count" =~ ^[0-9]+$ ]] || { echo 'A valid original desired count is required.' >&2; exit 1; }
+          echo "task_definition=$previous_definition" >> "$GITHUB_OUTPUT"
+          echo "desired_count=$previous_count" >> "$GITHUB_OUTPUT"
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -159,7 +166,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Download active task definition
-        run: aws ecs describe-task-definition --task-definition "$ECS_TASK_DEFINITION_NAME" --query taskDefinition > task-definition.json
+        run: aws ecs describe-task-definition --task-definition "${{ steps.previous.outputs.task_definition }}" --query taskDefinition > task-definition.json
       - name: Render task definition with image digest tag
         id: render-task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -184,6 +191,7 @@ jobs:
             sudo dpkg -i /tmp/session-manager-plugin.deb
           fi
       - name: Start temporary task and wait for stability
+        timeout-minutes: 12
         run: |
           aws ecs update-service \
             --cluster "$ECS_CLUSTER" \
@@ -192,32 +200,22 @@ jobs:
             --force-new-deployment >/dev/null
           aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
       - name: Smoke test through ECS Exec
-        run: |
-          TASK_ARN="$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" --desired-status RUNNING --query 'taskArns[0]' --output text)"
-          test "$TASK_ARN" != "None" || { echo 'No running ECS task found.' >&2; exit 1; }
-
-          for attempt in {1..12}; do
-            if aws ecs execute-command \
-              --cluster "$ECS_CLUSTER" \
-              --task "$TASK_ARN" \
-              --container gateway \
-              --interactive \
-              --command "wget -q -O - http://127.0.0.1:8080/actuator/health | grep -q '\"status\":\"UP\"'"; then
-              exit 0
-            fi
-            echo "ECS Exec is not ready yet (attempt ${attempt}/12)."
-            sleep 10
-          done
-          exit 1
+        timeout-minutes: 21
+        env:
+          EXPECTED_TASK_DEFINITION: ${{ steps.deploy.outputs.task-definition-arn }}
+        run: bash scripts/ecs-verification.sh health
       - name: Restore normal desired count after successful smoke test
+        timeout-minutes: 12
         if: success()
         run: |
           aws ecs update-service \
             --cluster "$ECS_CLUSTER" \
             --service "$ECS_SERVICE" \
             --desired-count "${{ steps.previous.outputs.desired_count }}" >/dev/null
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
       - name: Roll back failed deployment
-        if: ${{ failure() && steps.deploy.outcome == 'success' }}
+        timeout-minutes: 12
+        if: ${{ failure() && steps.previous.outcome == 'success' && (steps.deploy.outcome == 'success' || steps.deploy.outcome == 'failure') }}
         run: |
           echo "Rolling back to ${{ steps.previous.outputs.task_definition }}"
           aws ecs update-service \
@@ -226,6 +224,7 @@ jobs:
             --task-definition "${{ steps.previous.outputs.task_definition }}" \
             --desired-count "${{ steps.previous.outputs.desired_count }}" \
             --force-new-deployment >/dev/null
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
       - name: Show recent application logs after failure
         if: failure()
         run: aws logs tail "/ecs/multi-llm-gateway" --since 15m || true

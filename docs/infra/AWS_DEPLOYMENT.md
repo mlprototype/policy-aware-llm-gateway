@@ -193,7 +193,7 @@ aws secretsmanager put-secret-value \
   --secret-string '{
     "openai_api_key": "sk-proj-YOUR-ACTUAL-OPENAI-KEY",
     "anthropic_api_key": "sk-ant-YOUR-ACTUAL-ANTHROPIC-KEY",
-    "gateway_api_key": "dev-gateway-key-001"
+    "gateway_api_key": "YOUR-HIGH-ENTROPY-VERIFICATION-KEY"
   }'
 ```
 
@@ -255,14 +255,11 @@ echo "$ECS_PUBLIC_IP"
 # 1. アクチュエータヘルスチェック
 curl -i http://<ECS_PUBLIC_IP>:8080/actuator/health
 
-# 2. LLMプロキシ疎通テスト (マスターAPIキーを使用)
-curl -i -X POST http://<ECS_PUBLIC_IP>:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: dev-gateway-key-001" \
-  -d '{
-    "messages": [{"role": "user", "content": "日本語で一言挨拶してください"}],
-    "max_tokens": 10
-  }'
+# 2. Tenant / Client 登録と認証済みchat（Repository rootで実行）
+export ECS_CLUSTER=multi-llm-gateway-cluster
+export ECS_SERVICE=multi-llm-gateway-service
+bash scripts/ecs-verification.sh bootstrap
+bash scripts/ecs-verification.sh chat
 ```
 
 ---
@@ -336,6 +333,8 @@ ECS Exec を使うため、GitHub-hosted runner の変動 IP を Security Group 
 `terraform plan` は S3 上の remote state と AWS の実リソースを照合して実行します。S3 ネイティブロックを使用するため、GitHub Actions 用 IAM ロールには state に対する `s3:GetObject` / `s3:PutObject`、ロックファイルに対する `s3:GetObject` / `s3:PutObject` / `s3:DeleteObject` が必要です。state 本体への `s3:DeleteObject` は付与しません。
 
 ### smoke test の前提
+
+認証済みchatの初期登録は [Operations Runbook](OPERATIONS_RUNBOOK.md#authentication-provisioning) を参照してください。
 
 このアプリケーションは AWS profile で PostgreSQL を必須とするため、CI が利用する ECS サービスは事前に `enable_rds = true` で構築し、RDS 管理シークレットを参照する最新タスク定義を適用しておく必要があります。ECR、ECS サービス、RDS、Secrets Manager を含むベースインフラを先に Terraform で適用してから、デプロイワークフローを有効化してください。ECS Exec の有効化とタスクロール権限は Terraform で管理されています。
 

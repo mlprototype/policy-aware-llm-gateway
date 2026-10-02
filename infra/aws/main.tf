@@ -211,7 +211,7 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_secrets" {
   policy_arn = aws_iam_policy.ecs_secrets_access[0].arn
 }
 
-# ECS タスクロール (コンテナ内アプリケーションがAWSサービスを呼び出す用 - Bedrock等)
+# ECS タスクロール (ECS Exec の SSM メッセージチャネル用)
 resource "aws_iam_role" "ecs_task" {
   name = "${var.project_name}-ecs-task-role"
 
@@ -255,28 +255,6 @@ resource "aws_iam_policy" "ecs_exec" {
 resource "aws_iam_role_policy_attachment" "ecs_task_exec" {
   role       = aws_iam_role.ecs_task.name
   policy_arn = aws_iam_policy.ecs_exec.arn
-}
-
-# Bedrockの呼び出し権限を付与 (本番想定AI基盤としての実運用アピール)
-resource "aws_iam_policy" "bedrock_access" {
-  name        = "${var.project_name}-bedrock-policy"
-  description = "Allow AI Gateway to invoke Amazon Bedrock foundation models"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
-        Resource = ["*"]
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "ecs_task_bedrock" {
-  role       = aws_iam_role.ecs_task.name
-  policy_arn = aws_iam_policy.bedrock_access.arn
 }
 
 # ==========================================

@@ -29,3 +29,9 @@ logging:
   level:
     root: INFO
     io.github.mlprototype.gateway: INFO
+
+# Redis rate control is optional and fail-open; DB health remains required.
+management:
+  health:
+    redis:
+      enabled: false

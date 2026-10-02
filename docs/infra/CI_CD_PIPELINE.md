@@ -14,7 +14,7 @@ GitHub Actions で test、Terraform 検証、image 配布、ECS 一時デプロ�
 
 ## Trigger Strategy
 
-`src/**`、`infra/aws/**`、Dockerfile、Gradle 設定、Workflow 定義の変更を含む `main` への push で起動する。concurrency group によりデプロイを直列化し、ロールバック対象を取り違えない。手動実行は再検証に使う。
+`src/**`、`infra/aws/**`、Dockerfile、Gradle 設定、Workflow 定義と `scripts/**` の変更を含む `main` への push で起動する。concurrency group によりデプロイを直列化し、ロールバック対象を取り違えない。手動実行は再検証に使う。
 
 ## Pipeline Flow
 
@@ -51,11 +51,11 @@ OIDC 認証後に通常の `terraform init` を実行して S3 remote state を�
 
 ## Smoke Test Strategy
 
-Workflow は一時的に `desired_count = 1` として安定化を待ち、ECS Exec でコンテナ内部の `http://127.0.0.1:8080/actuator/health` を確認する。準備待ちのためリトライし、public IP や ALB に依存しない。
+Workflow は一時的に `desired_count = 1` として安定化を待ち、ECS Exec でコンテナ内部の `http://127.0.0.1:8080/actuator/health` を、明示的shell内の `wget --spider` と成功markerで確認する。ScriptはCLI exit codeだけでは成功としない。AWS healthはoptional Redisを必須条件から除外し、DB healthは維持する。認証済みchatはRunbookの明示的bootstrap / chat手順で別途検証する。準備待ちのためリトライし、public IP や ALB に依存しない。
 
 ## Rollback Strategy
 
-デプロイ後に smoke test、ECS Exec、起動数の復元が失敗した場合、記録済みの Task Definition と `desired_count` を `--force-new-deployment` で復元する。失敗時は直近の CloudWatch Logs も出力する。
+デプロイ後に smoke test、ECS Exec、起動数の復元が失敗した場合、記録済みの Task Definition と `desired_count` を `--force-new-deployment` で復元し、`services-stable` を期限付きで待つ。Deploy step自体の失敗も復元対象とし、成功時の起動数復元後も安定化を待つ。失敗時は直近の CloudWatch Logs も出力する。
 
 ## IAM and OIDC
 

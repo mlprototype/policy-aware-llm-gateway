@@ -99,7 +99,7 @@ public class AuditLogEntity {
     @Column(name = "request_hash", length = 64)
     private String requestHash;
 
-    @Column(name = "request_preview", length = 200)
+    @Column(name = "request_preview", length = AuditPreview.MAX_LENGTH)
     private String requestPreview;
 
     @Column(name = "created_at", nullable = false, updatable = false)

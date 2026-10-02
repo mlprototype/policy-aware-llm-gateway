@@ -64,9 +64,35 @@ terraform apply -var="desired_count=1" -var="enable_rds=true"
 
 既存 Service で RDS を後から有効化する場合は、最新 Task Definition へ更新して `--force-new-deployment` を実行する。Redis と ALB は必要時だけ有効化し、task が `RUNNING` になることを確認する。
 
+## Authentication Provisioning
+
+認証は DB の API Client hash lookup である。`GATEWAY_API_KEY` の Secrets Manager 注入だけでは登録されない。
+AWS は local seed を使わず、ECS 起動後に別の non-web process を明示的に一度実行する。
+Secrets Manager の `gateway_api_key` には高エントロピーの検証用 key を直接登録し、Terraform / CI に実値を渡さない。
+
+Linux / GNU `timeout` を持つ操作環境で、Repository root から実行する（macOS では `TIMEOUT_COMMAND=gtimeout` を指定）。
+AWS CLI と Session Manager plugin、および対象 Task の ECS Exec 権限が必要である。
+
+```bash
+export ECS_CLUSTER=multi-llm-gateway-cluster
+export ECS_SERVICE=multi-llm-gateway-service
+# 初回登録、または同一 key / ACTIVE identity の再確認。通常起動では実行しない。
+bash scripts/ecs-verification.sh bootstrap
+# HTTP 200 を確認する。実 Provider を呼び、max_tokens=16 で利用費が発生する。
+bash scripts/ecs-verification.sh chat
+```
+
+`GATEWAY_BOOTSTRAP_OK` / `GATEWAY_CHAT_OK` の出力を成功条件とする。Script は CLI exit code に加え、remote marker を確認する。
+Tenant `aws-verification` / Client `verification-client` を作成し、既存 identity なら同じhashと ACTIVE status を確認する。
+異なる key、停止 Tenant / Client、他Clientに割り当て済みの key は拒否し、credential や policy を上書きしない。
+DBにはSHA-256 hashだけを保存する。Raw key は task の環境変数内にあり、chat HTTP client の引数にも一時的に含まれるため、ECS Exec / process 閲覧権限を制限する。
+登録 process は既存 task 内で別 JVM（heap上限96MB）を使うため、実AWSでは memory headroom も検証する。
+Key rotation / revoke は別途明示的に管理する。Secret 更新後はtask再作成が必要で、このbootstrapは既存Clientのkeyを自動交換しない。
+CI health smoke はこの登録とchatを自動実行しない。
+
 ## Run Smoke Test
 
-GitHub Actions は ECS Exec で自動確認する。手動でも public IP は使わず、タスク内部から確認する。Session Manager plugin が必要である。
+GitHub Actions は `scripts/ecs-verification.sh health` を ECS Exec で実行し、明示的 shell の `wget --spider` が成功した後の marker を確認する。HTTP 200 を成功条件とし、DOWN / OUT_OF_SERVICE の標準503は失敗となる。AWS profile の Redis indicator は無効で、optional / fail-open dependency を全体healthの必須条件にしない。DB health は維持する。手動でも public IP は使わず、タスク内部から確認する。Session Manager plugin が必要である。
 
 ```bash
 aws ecs execute-command --cluster <ecs-cluster> --task <running-task-arn> \
@@ -82,7 +108,7 @@ aws ecs execute-command --cluster <ecs-cluster> --task <running-task-arn> \
 
 ## Rollback Procedure
 
-Workflow はデプロイ後の失敗時に、記録済みの Task Definition と起動数へ自動復元する。手動復元では直前の ARN と起動数で `aws ecs update-service --force-new-deployment` を実行する。
+Workflow はデプロイ後の失敗時に、記録済みの Task Definition と起動数へ自動復元し、service stability を期限付きで待つ。Deploy step 自体が失敗した場合も復元対象で、正常smoke後に元の起動数へ戻す際も安定化を待つ。手動復元では直前の ARN と起動数で `aws ecs update-service --force-new-deployment` を実行する。
 
 ## Cleanup Procedure
 

@@ -1,5 +1,6 @@
 package io.github.mlprototype.gateway.content;
 
+import io.github.mlprototype.gateway.audit.AuditPreview;
 import io.github.mlprototype.gateway.dto.ChatRequest;
 import io.github.mlprototype.gateway.dto.Message;
 import io.github.mlprototype.gateway.observability.GatewayMetrics;
@@ -118,6 +119,6 @@ public class ContentSecurityService {
             }
         }
         String full = sb.toString().trim();
-        return full.length() > 200 ? full.substring(0, 200) + "..." : full;
+        return AuditPreview.truncate(full);
     }
 }

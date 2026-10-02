@@ -4,6 +4,8 @@ import io.github.mlprototype.gateway.dto.ChatRequest;
 import io.github.mlprototype.gateway.dto.Message;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
 
@@ -21,6 +23,47 @@ class ContentSecurityServiceTest {
         PiiMasker piiMasker = new PiiMasker();
         io.github.mlprototype.gateway.observability.GatewayMetrics gatewayMetrics = org.mockito.Mockito.mock(io.github.mlprototype.gateway.observability.GatewayMetrics.class);
         service = new ContentSecurityService(piiDetector, injectionDetector, piiMasker, gatewayMetrics);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {199, 200, 201, 1000})
+    void previewRespectsColumnLength(int length) {
+        String content = "あ".repeat(length);
+        ChatRequest request = ChatRequest.builder()
+                .messages(List.of(new Message("user", content))).build();
+
+        String preview = service.evaluate(request, PiiAction.MASK, InjectionAction.BLOCK)
+                .sanitizedPreview();
+
+        assertThat(preview).hasSize(Math.min(length, 200));
+        if (length <= 200) {
+            assertThat(preview).isEqualTo(content);
+        } else {
+            assertThat(preview).isEqualTo("あ".repeat(197) + "...");
+        }
+    }
+
+    @Test
+    void maskedPreviewRespectsColumnLengthWithoutExposingDetectedPii() {
+        ChatRequest request = ChatRequest.builder()
+                .messages(List.of(new Message("user", "test@example.com " + "あ".repeat(300))))
+                .build();
+
+        ContentSecurityResult result = service.evaluate(request, PiiAction.MASK, InjectionAction.BLOCK);
+
+        assertThat(result.sanitizedPreview()).hasSize(200)
+                .startsWith("[EMAIL_REDACTED] ").endsWith("...")
+                .doesNotContain("test@example.com");
+    }
+
+    @Test
+    void previewDoesNotSplitSurrogatePair() {
+        ChatRequest request = ChatRequest.builder()
+                .messages(List.of(new Message("user", "あ".repeat(196) + "😀" + "あ".repeat(20))))
+                .build();
+
+        assertThat(service.evaluate(request, PiiAction.MASK, InjectionAction.BLOCK).sanitizedPreview())
+                .isEqualTo("あ".repeat(196) + "...");
     }
 
     @Test

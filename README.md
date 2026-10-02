@@ -1,584 +1,236 @@
 # Policy-Aware Multi-LLM Gateway
 
-> LLM / Agent 呼び出しを本番運用するための運用統治レイヤー（Gateway）
->
-> Spring Boot 製 LLM Gateway と AWS 運用基盤を組み合わせた、本番運用を想定したリファレンス実装。
+LLM / Agent 利用の identity・policy・rate control・content security・provider resilience・audit を、Gateway 境界で共通適用する Spring Boot ベースの運用統治レイヤー。
+複数アプリケーションと LLM Provider の間に置く **Policy Enforcement Point** のリファレンス実装であり、AWS への deploy・observe・verify を対象とする個人開発の検証基盤も含みます。
 
-アプリケーションと LLM プロバイダの間に配置し、認証、プロバイダ抽象化、レート制御、可用性、安全性、監査性を一元的に扱う。
+## Problem — 解決する課題
 
----
+各アプリケーションが Provider API を直接呼ぶと、共通の利用方針を変更・追跡する責務が分散します。
 
-## 関連プロジェクトと設計上の位置づけ
+- Provider API Key の保管・更新がアプリケーションごとに必要になる。
+- Tenant / API Client の利用許可と停止判断が統一されない。
+- Rate Limit が個別実装となり、Tenant 単位の利用量を制御しにくい。
+- PII / Prompt Injection の検知・処置がアプリケーションごとに異なる。
+- Provider 障害時の timeout・fallback の挙動がばらつく。
+- Audit / Trace / Metrics が分散し、呼び出し結果を追跡しにくい。
+- Provider 固有のリクエスト・レスポンス形式がアプリケーションへ漏れる。
 
-本リポジトリは、生成AIを業務システムへ安全に導入するための
-「品質保証・動的制御・運用統治」からなる3層アーキテクチャのうち、
-**運用統治レイヤー** を担います。
+## What This System Does
 
-| プロジェクト | 主な責務 |
-|---|---|
-| [Retrieval品質管理システム](https://github.com/mlprototype/spec-rag-qa) | 品質保証 |
-| [Agentic RAG with Control Plane](https://github.com/mlprototype/ai-agent-rag) | 動的制御 |
-| **本リポジトリ（Policy-Aware Multi-LLM Gateway）** | **運用統治 / AWS運用基盤** |
+| Capability | Gateway が適用する制御 |
+| --- | --- |
+| Tenant Authentication | `X-API-Key` の SHA-256 hash で ACTIVE な API Client を検索し、SUSPENDED Tenant を拒否 |
+| Tenant-aware Policy | Tenant の毎分リクエスト上限・PII action・Injection action を Request Context に解決 |
+| Rate Limiting | Redis の Tenant 単位 Fixed Window。上限超過は 429、Redis 障害時は fail-open |
+| Content Security | 全メッセージ本文をルールで評価し、Provider 呼び出し前に MASK / BLOCK 等を適用 |
+| Multi-Provider Abstraction | OpenAI 互換の chat endpoint から OpenAI / Anthropic へ形式を変換 |
+| Controlled Degradation | Provider 単位 Circuit Breaker と、分類された障害だけを対象とする single-step fallback |
+| Audit / Observability | 成功・content block・routing error の監査記録、Trace、latency、利用量、Micrometer metrics |
+| AWS Operational Verification | Terraform、ECS、Secrets Manager、CloudWatch、OIDC deploy / smoke / rollback の検証構成 |
 
----
-
-## 解決する課題
-
-LLM/Agent を本番で運用する際、コスト暴走・プロバイダ障害・PII 流出・監査要件
-への対応が必要になる。
-
-## システム概要
-
-本プロジェクトは、これらを横断的に統治する Gateway 層を、
-Spring Boot / Flyway / Redis / structured logging を土台に段階的に実装する設計探索である。
-単に AI を呼び出せるだけでなく、安全に使え、障害時に劣化運転でき、後から追跡できることを重視している。
-
-AWS 検証環境では、Terraform による IaC、ECS Fargate へのコンテナ配備、Secrets Manager、CloudWatch、GitHub Actions OIDC を組み合わせる。アプリケーション機能に加え、デプロイ、シークレット管理、可観測性、コスト管理までを一貫して検証できるようにしている。
-
-## Key Features
-
-- OpenAI 互換 API Gateway と OpenAI / Anthropic Provider 抽象化
-- Tenant-based API Key 認証、Redis-based Rate Limiting、Circuit Breaker / Fallback Routing
-- PII Detection、Prompt Injection Detection、非同期 Audit Log、構造化 JSON Logging
-- Prometheus / Grafana によるローカル可観測性と、local/dev 向け Swagger UI / OpenAPI
-- Terraform による AWS Infrastructure（ECS Fargate、ECR、CloudWatch、Secrets Manager、RDS）
-- GitHub Actions OIDC による CI/CD、ECS Exec smoke test、失敗時の自動 rollback
-- S3 Remote State と native locking、Zero-Idle のコスト最適化設計
-
-## 想定ユースケース
-
-#### 複数業務アプリからのLLM利用を安全に統制するGateway
-
-複数の業務システムやAIアプリケーションが、社内共通のLLM Gateway経由でLLM APIを利用するケースを想定。
-
-各アプリケーションが個別にLLM APIを直接呼び出すと、以下の課題が発生する。
-
-- APIキー管理がアプリごとに分散する
-- テナントやプロジェクト単位の利用制御が難しい
-- Rate Limitやコスト制御が統一できない
-- LLMプロバイダー障害時のFallbackが各アプリ実装になる
-- PII検知やプロンプトインジェクション対策が分散する
-- 監査ログやメトリクスが統一されない
-- 運用・監視・セキュリティポリシーがアプリごとにばらつく
-
-このシステムでは、Spring Boot 3でLLM Gatewayを構築し、LLM利用時の非機能要件をGateway側に分離・共通化する。
-
----
-
-## アーキテクチャ
+## Architecture
 
 ```mermaid
-graph TD
-    subgraph Client Layer
-        C[Client Application]
-    end
-
-    subgraph Gateway Filter Chain
-        F1[TraceIdFilter] --> F2[LatencyFilter]
-        F2 --> F3[ApiKeyFilter]
-        F3 --> F4[RateLimitFilter]
-    end
-
-    subgraph Core Logic
-        Auth[AuthenticationService<br/>DB / SHA-256]
-        RL[RateLimiter<br/>Redis]
-        Ctrl[ChatCompletionController]
-        Security["ContentSecurityService<br/>PII and Injection"]
-        Router[ProviderRoutingService]
-        Registry[ProviderRegistry]
-        CB[CircuitBreakerProviderInvoker]
-        Audit["AuditLogger<br/>(Fail-open DB Persistence)"]
-    end
-
-    subgraph Provider Layer
-        OpenAI[OpenAiProvider]
-        Anthropic[AnthropicProvider]
-    end
-
-    C -->|HTTP POST| F1
-    F3 -.->|Validate and Fetch Context| Auth
-    F4 -.->|Check Window| RL
-    F4 -->|Authenticated and Allowed| Ctrl
-    Ctrl -->|1. Evaluate PII and Injection| Security
-    Security -->|Pass or Mask| Ctrl
-    Ctrl -->|2. Route Request| Router
-    Router -.->|Lookup Provider| Registry
-    Router -->|Invoke with Breaker| CB
-    CB -->|provider.complete| OpenAI
-    CB -->|provider.complete| Anthropic
-    OpenAI <-->|HTTPS| ExtO[(OpenAI API)]
-    Anthropic <-->|HTTPS| ExtA[(Anthropic API)]
-
-    Ctrl -.->|Async Audit Event with Usage| Audit
+flowchart LR
+    C[Client / Agent Application] --> T[Trace / Latency]
+    T --> I[Identity / Tenant Context]
+    I --> R[Rate Control]
+    R --> S[Content Policy]
+    S --> P[Provider Routing]
+    P --> B[Provider-scoped Circuit Breaker]
+    B --> O[OpenAI]
+    B --> A[Anthropic]
+    I -. lookup .-> DB[(PostgreSQL)]
+    R -. counter .-> Redis[(Redis)]
+    S -. decision .-> Audit[Audit / DB Persistence]
+    P -. outcome .-> Audit
+    T -. correlation .-> Obs[Logs / Metrics / Trace]
+    R -. rejects .-> Obs
+    S -. block / warn .-> Obs
+    B -. latency / failures .-> Obs
+    Audit -. structured event .-> Obs
 ```
 
-### AWS Architecture
+Content Policy を通過したリクエストだけを Provider へ送ります。Fallback は routing 層で判断し、別 Provider の Circuit Breaker を通して一度だけ実行します。
+AWS の構成は後述の Operational Verification と既存ドキュメントに分離しています。
 
-AWS 上の構成、CI/CD、Secrets 管理、Zero-Idle 設計の詳細は以下を参照してください。
+## Key Engineering Decisions
 
-- [AWS Architecture](docs/infra/AWS_ARCHITECTURE.md)
-- [CI/CD Pipeline](docs/infra/CI_CD_PIPELINE.md)
-- [Security Model](docs/infra/SECURITY_MODEL.md)
-- [Operations Runbook](docs/infra/OPERATIONS_RUNBOOK.md)
-- [Cost Optimization Strategy](docs/infra/COST_OPTIMIZATION.md)
-- [Terraform Deployment Guide](infra/aws/TERRAFORM_DEPLOYMENT_GUIDE.md)
+| Decision | Why | Trade-off |
+| --- | --- | --- |
+| Gateway を Policy Enforcement Boundary にする | 各アプリケーションの認証・rate・content policy・audit を共通化する | 共通依存となり、latency と policy 変更の影響が複数アプリケーションに及ぶ |
+| Tenant Context で policy を解決する | Tenant ごとの利用上限と content action を適用する | DB 設定の管理と、global default との precedence が必要 |
+| Selective Fallback を採用する | 接続・Provider 障害時に代替経路を試し、4xx や変換エラーを隠蔽しすぎない | failure 分類と fallback 先の model / message 条件を管理する必要がある |
+| 障害の責務ごとに failure policy を分ける | Redis / audit 保存の障害では処理を継続し、content BLOCK では送信を止める | Rate Limit の一時的な不適用や監査欠損を許容する。認証 DB 障害まで fail-open にはしない |
+| OpenAI-compatible boundary と Provider mapper を使う | Client と Provider 固有の API 形式の結合を弱める | 共通 DTO の範囲に制約があり、Provider 固有機能をすべて表現できない |
 
-**Response Headers** — 全レスポンスに Gateway 拡張ヘッダが付与されます:
+## Governance / Request Lifecycle
 
-| Header | Description |
-|:---|:---|
-| `X-Gateway-Trace-Id` | リクエスト固有の UUID（MDC でログに連携） |
-| `X-Gateway-Latency-Ms` | Gateway 内の処理時間 (ms) |
-| `X-Gateway-Requested-Provider` | リクエストで要求された provider 名 |
-| `X-Gateway-Provider` | **実解決値** (ルーティング後に実際に使用されたプロバイダ名) |
-| `X-Gateway-Fallback-Used` | fallback routing が実行されたか (`true` / `false`) |
-| `X-RateLimit-Limit` | テナントごとの 1 分間あたりのリクエスト上限 |
-| `X-RateLimit-Remaining` | 現在の 1 分間における残りリクエスト可能数 |
-| `X-Gateway-Security-Blocked` | セキュリティポリシー違反によりブロックされた場合 (`true`) |
-| `X-Gateway-Block-Reason` | ブロック理由 (`PII_DETECTED`, `INJECTION_DETECTED`) |
-| `X-Gateway-Security-Score` | Prompt Injection BLOCK 時の検知スコア |
-| `X-Gateway-Security-Categories` | Prompt Injection BLOCK 時に一致したカテゴリ（カンマ区切り） |
+`POST /v1/chat/completions` の主な判定順序は次のとおりです。
 
----
+1. **Trace / Latency** — `X-Request-Id` があれば採用し、なければ UUID を生成。MDC と response header に Trace ID を設定し、filter chain 全体の時間を計測します。
+2. **Authentication / Tenant Context** — API Key hash から ACTIVE Client と Tenant を取得。無効な key は 401、SUSPENDED Tenant は 403。Tenant / Client ID、rate limit、content action を後段へ渡し、終了時に Context を消去します。
+3. **Rate Control** — Tenant ID と UTC の暦分を Redis key にして `INCR`。上限超過は 429 で止め、残数ヘッダを返します。Redis 障害時は制御を通過させ、rate ヘッダを省略します。
+4. **Content Security** — リクエスト DTO の検証後、PII と Injection を元の本文で検知。両方が BLOCK 条件を満たす場合は PII を優先します。MASK は新しい本文へ適用し、BLOCK は Provider 選択・呼び出し前に拒否します。
+5. **Provider Selection** — `X-Gateway-Requested-Provider` または既定の `openai` を解決。Provider registry と model / message 条件を確認し、不一致は 400 で拒否します。
+6. **Invocation / Circuit Breaker** — Provider ごとの mapper と HTTP client で呼び出します。接続 timeout は 5 秒、read timeout は既定 30 秒。Circuit Breaker は Provider ごとに独立します。
+7. **Selective Fallback** — 対象 failure ならもう一方の Provider を一度だけ試行。互換性のない model は fallback 先の既定値に切り替え、必要な message 条件を満たさなければ fallback を行いません。
+8. **Audit / Observability** — Controller が成功・content block・routing error の event を記録。Provider / fallback / security の metrics と Trace により、実際の経路と判定を追跡します。
 
-## 設計思想
+Tenant override は **毎分リクエスト上限・PII action・Injection action** です。Content action は有効な Tenant 設定を優先し、未設定・空・無効な値では global default（PII `MASK`、Injection `BLOCK`）へ戻ります。
+Provider / model の Tenant 別許可リストや、Tenant 別 timeout / fallback 設定はありません。
 
-| 判断 | 選定 | Why |
-|:---|:---|:---|
-| Web 層 | Spring MVC + Virtual Threads | リアクティブの複雑性回避、JPA/Redis 親和性 |
-| API I/F | OpenAI 互換 | 既存 SDK 流用、ロックイン回避 |
-| Provider 抽象化 | Interface + Mapper | LLM プロバイダ追加を低コスト化 |
-| 認証方式 (Sprint 2) | DB (SHA-256) | deterministic hash による lookup simplicity を優先。stronger secret rotation / vault integration は future work。 |
-| レートリミット (Sprint 2) | Redis Fixed-Window | Fail-open 設計 (Redis 障害時でもリクエストをブロックしない)。Retry-After は現状 60 秒固定 (将来 window 残り時間へ改善可能)。 |
-| 可用性戦略 (Sprint 3) | controlled degradation | timeout / 5xx / breaker-open 時に single-step fallback を許可し、provider 4xx や invalid response は隠蔽しすぎない。 |
-| セキュリティ監査 (Sprint 4) | ContentSecurityService + Async AuditDB | PIIマスキングやインジェクション検知をルーティング前に実施。監査ログ保存はDBダウン時にもメインフローを止めない Fail-open 設計。テナントごとのポリシー(BLOCK, MASK, WARN)を動的に適用。 |
-| APIドキュメント | springdoc-openapi / Swagger UI | curl だけに依存せず、local/dev 環境で API 仕様と試行導線を提供。本番では Swagger UI を無効化する想定。 |
-| ビルドツール | Gradle (Groovy DSL) | Spring Boot 標準、CI キャッシュ親和性 |
----
+### Audit に残る情報
 
-## 技術スタック
+- Trace / Tenant / Client ID、requested / resolved Provider、model、fallback 使用有無・理由。
+- HTTP status、処理結果、Controller 内の latency、error message、Provider が返した token usage。
+- PII の検知・action・pattern、Injection の検知・action・rule ID・score・category。
+- メッセージ本文の連結から計算した SHA-256 hash と、検知済み PII をマスクした最大200文字（suffix込み）の preview。
 
-| Component | Technology |
-|:---|:---|
-| Language | Java 21 |
-| Framework | Spring Boot 3.5.x |
-| Web | Spring MVC + Virtual Threads |
-| Database | PostgreSQL + Flyway |
-| Cache | Redis |
-| Resilience | Resilience4j |
-| Observability | Structured JSON Logging, Prometheus, Grafana, CloudWatch |
-| API Docs | springdoc-openapi / Swagger UI |
-| Container | Docker, Docker Compose |
-| Cloud | AWS ECS Fargate, ECR, RDS, Secrets Manager, CloudWatch |
-| IaC | Terraform, S3 Remote State, S3 Native Locking |
-| CI/CD | GitHub Actions, OIDC, ECR Push, ECS Deploy, Smoke Test, Auto Rollback |
-| Build | Gradle |
+現実装の DB 保存は **同期・fail-open** です。保存例外は metric とログへ記録し、main request を失敗させませんが、DB 待機時間はレスポンス時間へ加わります。
+認証拒否・Rate Limit 拒否・DTO validation error は Audit DB 保存の対象外で、rate 判定結果も audit event / DB へ連携されていません。
+JSON logging は `local` 以外で有効です。ローカルは Prometheus / Grafana、AWS は CloudWatch Logs / Dashboard を使います。
 
----
+## Policy & Reliability Behavior
 
-## Quick Start - Local Development
+### Content Policy
 
-### Prerequisites
+PII は email・電話番号・credit card 形式・一部 API Key 形式を正規表現で検知します。
+Injection は NFKC・小文字化・format character 除去・空白正規化後にルールを照合し、rule ごとに一度だけ加点します。
+合計 score が 70 以上、または system prompt 抽出 / secret 窃取の指定ルール一致で検知とし、category と score を記録します。Score は攻撃確率を表すものではありません。
 
-- Java 21
-- Docker & Docker Compose
+| Situation | Behavior |
+| --- | --- |
+| PII + `MASK` | 一致文字列を `[EMAIL_REDACTED]` 等へ置換した本文を Provider へ送る |
+| PII + `BLOCK` | 400。Provider を呼ばず、block 判定を audit event に記録 |
+| PII + `ALLOW` | 検知結果を記録し、本文は変更せず送る |
+| Injection + `BLOCK` | 403。Provider を呼ばず、rule / score / category を audit event に記録 |
+| Injection + `WARN` | 本文を通過させ、検知結果を audit event と warn metric に記録 |
+| Injection + `ALLOW` | 検知結果を記録し、本文を通過させる |
 
-### 1. Setup
+PII は `ALLOW / MASK / BLOCK`、Injection は `ALLOW / WARN / BLOCK` をサポートします。
+Preview は PII action に関係なく検知済み PII をマスクしますが、未検知の機密情報まで除去する保証はありません。
+
+### Provider Failure
+
+| Failure classification | Fallback? | Failure に対応する HTTP status |
+| --- | --- | --- |
+| `TIMEOUT` | 対象 | 503 |
+| `CONNECTION_ERROR` | 対象 | 503 |
+| `UPSTREAM_5XX` | 対象 | 502 |
+| `BREAKER_OPEN` | 対象。元 Provider の HTTP 呼び出しを省略 | 503 |
+| `UPSTREAM_4XX`（429 を含む） | 対象外。Circuit Breaker の失敗集計からも除外 | 502 |
+| `INVALID_RESPONSE` | 対象外。Circuit Breaker の失敗集計には含める | 502 |
+
+上表の status は primary failure の対応値です。Fallback を試して失敗した場合は **最後の failure** に対応する status を返します。
+経路は `openai → anthropic` または `anthropic → openai` の一段のみです。Fallback 先の失敗から再帰的に戻ることはありません。
+Model の互換性検証は `claude-` prefix による分類であり、実在する model や利用権限の検証ではありません。
+
+## Validation / Evidence
+
+以下はリポジトリ内のテストで確認している境界です。Provider は mock / MockWebServer を使い、外部 LLM の稼働や商用運用実績を示すものではありません。
+テスト入口は `./gradlew test`。CI はテストと `bootJar` build を実行します。
+
+| Evidence | Representative tests |
+| --- | --- |
+| 認証 filter の 401 / suspended 403 と Context cleanup（認証 service は mock） | [ApiKeyFilterTest](src/test/java/io/github/mlprototype/gateway/filter/ApiKeyFilterTest.java) |
+| 429 / headers / Redis 障害時の通過と header 省略 | [RateLimitFilterTest](src/test/java/io/github/mlprototype/gateway/ratelimit/RateLimitFilterTest.java)、[RedisUnavailabilityIntegrationTest](src/test/java/io/github/mlprototype/gateway/ratelimit/RedisUnavailabilityIntegrationTest.java) |
+| PII MASK / BLOCK、同時検知時の優先順位 | [ContentSecurityServiceTest](src/test/java/io/github/mlprototype/gateway/content/ContentSecurityServiceTest.java) |
+| Injection 正規化・score・category・rule の重複加点防止 | [InjectionDetectorTest](src/test/java/io/github/mlprototype/gateway/content/InjectionDetectorTest.java) |
+| Content block の HTTP semantics、Provider 未呼び出し、audit event | [ContentSecurityIntegrationTest](src/test/java/io/github/mlprototype/gateway/api/ContentSecurityIntegrationTest.java) |
+| Mapper の token 上限、timeout fallback、Provider / model 条件 | [OpenAiRequestMapperTest](src/test/java/io/github/mlprototype/gateway/provider/openai/OpenAiRequestMapperTest.java)、[ProviderRoutingServiceTest](src/test/java/io/github/mlprototype/gateway/router/ProviderRoutingServiceTest.java) |
+| 実 HTTP client 経由の 5xx fallback / 4xx 非fallback / breaker open / Anthropic mapping | [ProviderRoutingIntegrationTest](src/test/java/io/github/mlprototype/gateway/api/ProviderRoutingIntegrationTest.java) |
+| Audit の Injection field mapping、Prometheus 公開、Controller response headers | [AuditLoggerTest](src/test/java/io/github/mlprototype/gateway/audit/AuditLoggerTest.java)、[GatewayMetricsIntegrationTest](src/test/java/io/github/mlprototype/gateway/observability/GatewayMetricsIntegrationTest.java)、[ChatCompletionControllerTest](src/test/java/io/github/mlprototype/gateway/api/ChatCompletionControllerTest.java) |
+
+AWS profile / Redisなしのhealth、DB provisioning後のHTTP認証、長文previewの実PostgreSQL保存は [AWS Health test](src/test/java/io/github/mlprototype/gateway/api/AwsHealthIntegrationTest.java) / [Persistence test](src/test/java/io/github/mlprototype/gateway/security/OperationalPersistenceIntegrationTest.java) で検証します。
+
+## Operational Verification on AWS
+
+AWS は、この Gateway の配備・secret 注入・観測・復旧を検証対象にした構成です。常時稼働する商用サービスの運用実績は主張しません。
+
+- **Infrastructure** — [Terraform](infra/aws/) で ECS Fargate / ECR / IAM / Secrets Manager / CloudWatch と optional RDS / Redis / ALB を管理。
+- **Secrets** — API Key の実値は Terraform 外で登録し、ECS 起動時に注入。Gateway key は明示的な `aws-bootstrap` process でhashをDBへ登録し、通常起動では登録・更新しない（[手順](docs/infra/OPERATIONS_RUNBOOK.md#authentication-provisioning)）。RDS password は RDS 管理シークレットを参照し、rotation 後の再deploy を EventBridge / SSM Automation に定義。
+- **State** — S3 remote backend と `use_lockfile = true` を使用。State bucket の versioning・暗号化・public access block、および CI OIDC Role は別途 bootstrap する運用。
+- **CI/CD** — [deploy workflow](.github/workflows/deploy.yml) に test → OIDC / Terraform validate・plan → Git SHA tag の ECR push → ECS 更新 → ECS Exec health smoke を定義。Terraform apply は含まず、起動可能な RDS 接続済み Task Definition が前提。
+- **Rollback** — deploy step を実行した後の失敗で、記録した直前の Task Definition / desired count への復元を要求し、service stability を期限付きで確認。Deploy step 自体の失敗も復元対象とし、成功時の起動数復元後も安定化を待つ。
+- **Zero-Idle** — 既定は `desired_count = 0`、RDS / Redis / ALB 無効。検証後の選別削除は運用手順で実施し、ECR / Secrets / IAM / state を保持するため費用ゼロを保証するものではありません。
+
+CloudWatch はアプリログと ECS の CPU / memory 等を観測する構成です。アプリの Prometheus metrics を CloudWatch へ転送する設定は含みません。
+詳細は [AWS Architecture](docs/infra/AWS_ARCHITECTURE.md)、[CI/CD Pipeline](docs/infra/CI_CD_PIPELINE.md)、[Operations Runbook](docs/infra/OPERATIONS_RUNBOOK.md) を参照してください。
+
+## Tech Stack
+
+| Layer | Technology |
+| --- | --- |
+| Application | Java 21、Spring Boot 3.5.14、Spring MVC / Virtual Threads、Gradle |
+| Identity / Persistence | Spring Data JPA、PostgreSQL、Flyway |
+| Rate / Resilience | Redis、Resilience4j |
+| Observability | Micrometer、Prometheus / Grafana、Logstash JSON logging、CloudWatch |
+| API / Container | springdoc-openapi / Swagger UI、Docker / Docker Compose |
+| AWS / Delivery | ECS Fargate、ECR、RDS、Secrets Manager、Terraform、S3 state / locking、GitHub Actions / OIDC |
+
+## Quick Start — Local
+
+Docker / Docker Compose と、利用する Provider の API Key を準備します。Gradle をホストで実行する場合は Java 21 が必要です。
+
+### 1. Environment
 
 ```bash
 git clone https://github.com/mlprototype/policy-aware-llm-gateway.git
 cd policy-aware-llm-gateway
-
 cp .env.example .env
 ```
 
-`.env` を編集して API Key を設定:
+`.env` の `GATEWAY_API_KEY` を `dev-gateway-key-001` にし、`OPENAI_API_KEY` と、fallback を使う場合は `ANTHROPIC_API_KEY` を設定します。
+認証は DB lookup です。`GATEWAY_API_KEY` を変更するだけでは key は登録されません。Compose の `local` profile は [dev seed](src/main/resources/db/seed/V2_1__seed_dev_tenant.sql) を投入します。
 
-```dotenv
-# === Gateway Authentication ===
-# DB投入済みの Dev API Key を使用 (V2_1__seed_dev_tenant.sql 参照)
-GATEWAY_API_KEY=dev-gateway-key-001
-
-# === Gateway Security Policy ===
-GATEWAY_PII_ACTION=MASK
-GATEWAY_INJECTION_ACTION=BLOCK
-
-# === LLM Provider ===
-OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxx        # OpenAI API Key
-ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxx   # Anthropic API Key
-```
-
-### 2. Run with Docker Compose
+### 2. Start / Health
 
 ```bash
 docker compose up --build -d
+# 起動完了後に確認
+curl -fsS http://localhost:8080/actuator/health
 ```
 
-- `app` (Gateway 本体) — port 8080
-- `postgres` (PostgreSQL 16) — port 5433
-- `redis` (Redis 7) — port 6379
-
-### 3. Smoke Test
+### 3. One Chat Request
 
 ```bash
-# ✅ OpenAI Proxy — 正常リクエスト
-source .env
-curl -s http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $GATEWAY_API_KEY" \
-  -d '{
-    "messages": [{"role": "user", "content": "日本語で一言あいさつしてください"}],
-    "max_tokens": 10
-  }' | jq .
-
-# → {"id":"chatcmpl-...","model":"gpt-4o-mini-2024-07-18",
-#    "choices":[{"message":{"content":"こんにちは！"}}]}
-
-# ❌ Auth Failure — API Key なし
-curl -s http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"messages": [{"role": "user", "content": "こんにちは"}]}' | jq .
-
-# → {"status":401,"error":"Unauthorized","message":"Invalid or missing API key",
-#    "trace_id":"..."}
-
-# 💚 Health Check — 認証不要
-curl -s http://localhost:8080/actuator/health | jq .
-
-# → {"status":"UP"}
+curl -i http://localhost:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: dev-gateway-key-001' \
+  -d '{"messages":[{"role":"user","content":"日本語で一言あいさつしてください"}],"max_tokens":32}'
 ```
 
-### 4. Observability Dashboard
-
-Sprint 5 より、Prometheus と Grafana を使った可観測性が追加されました。
-
-1. `docker compose up -d` 実行後、数十秒〜1分程度待機します（Prometheus がメトリクスを収集し、Grafana がダッシュボードをプロビジョニングするため）。
-2. ブラウザで Grafana (`http://localhost:3000`) にアクセスします。
-   - ログインは不要です（ローカルデモ用途の簡易設定として匿名アクセスが有効化されています。本番環境での推奨設定ではありません）。
-3. **LLM Gateway Overview** ダッシュボードが自動的にロードされ、以下の情報が視覚的に確認できます。
-   - Gateway Total Requests (RPS)
-   - Provider Error Rate & HTTP Request Latency
-   - Rate Limit Rejects & Security Blocks / Warns
-
-### Run Locally (without Docker)
-
-PostgreSQL and Redis must be running locally before starting the application.
-
-```bash
-SPRING_PROFILES_ACTIVE=local ./gradlew bootRun
-```
-
-### Swagger UI (local/dev)
-
-Swagger UI は local/dev 環境で有効化する想定です。`local` profile ではデフォルトで有効になり、以下の URL から OpenAPI ドキュメントを確認できます。
-
-- Swagger UI: `http://localhost:8080/swagger-ui.html`
-- OpenAPI JSON: `http://localhost:8080/v3/api-docs`
-
-Docker やデモ用途で `local` profile を使わずに有効化したい場合は、環境変数で切り替えられます。
-
-```bash
-SPRINGDOC_API_DOCS_ENABLED=true
-SPRINGDOC_SWAGGER_UI_ENABLED=true
-```
-
-Swagger UI の `Try it out` はモックではなく、実際に `/v1/chat/completions` を呼び出します。そのため、通常の API 呼び出しと同じく `X-API-Key` が必要で、実際に LLM Provider へリクエストが送信されます。
-
-Swagger UI / OpenAPI endpoint はドキュメント閲覧のため認証・RateLimit の対象外にしていますが、実 API の認証・RateLimit・Security・Audit の挙動は変更していません。本番環境では `SPRINGDOC_API_DOCS_ENABLED=false`, `SPRINGDOC_SWAGGER_UI_ENABLED=false` のまま運用し、Swagger UI を無効化する想定です。
-
----
-
-## Quick Start - AWS Verification
-
-AWS 上の検証では Terraform と GitHub Actions OIDC を利用します。通常は `desired_count = 0` とし、検証時だけ RDS と ECS タスクを起動します。詳細手順は README ではなく、以下の運用ドキュメントを参照してください。
-
-- [Terraform Deployment Guide](infra/aws/TERRAFORM_DEPLOYMENT_GUIDE.md)
-- [Operations Runbook](docs/infra/OPERATIONS_RUNBOOK.md)
-
----
-
-## API Reference
-
-### `POST /v1/chat/completions`
-
-OpenAI Chat Completions API 互換エンドポイント。
-
-**Headers:**
-
-| Header | Required | Description |
-|:---|:---|:---|
-| `X-API-Key` | ✅ | Gateway 認証キー (DBのテナントと紐付け) |
-| `X-Gateway-Requested-Provider` | - | 使用プロバイダの**要求値** (`openai` または `anthropic` / default: `openai`) |
-| `X-Gateway-Provider` | - | request では legacy alias。response では**実解決値**を返す |
-| `X-Request-Id` | - | クライアント指定のトレース ID |
-
-**Request Body:**
-
-```json
-{
-  "model": "gpt-4o-mini",
-  "messages": [
-    {
-      "role": "system",
-      "content": "あなたは優秀なカスタマーサポートアシスタントです。ユーザーからの問い合わせ内容を分析し、対応優先度（高/中/低）と要約を簡潔な日本語で出力してください。"
-    },
-    {
-      "role": "user",
-      "content": "【問い合わせ内容】システム移行後から管理画面にログインできなくなりました。「認証エラー」と表示されます。業務への影響が大きいため、至急原因と対策をご連絡ください。"
-    }
-  ],
-  "temperature": 0.2,
-  "max_tokens": 512
-}
-```
-
-**Cost Safety:** `max_tokens` は Gateway 側で上限 4096 にクランプされます。
-
-`model` を指定する場合は選択した Provider と互換性のあるモデル名が必要です。OpenAIモデルを Anthropic に指定するなどの不一致は、Provider 呼び出し前に `400 Bad Request` として拒否します。`model` を省略した場合は Provider ごとのデフォルトモデルを使用します。Anthropicでは `system` 以外に、最低1件の `user` または `assistant` メッセージが必要です。
-
-**Migration Note:** request header は `X-Gateway-Requested-Provider` が正です。`X-Gateway-Provider` を request で送る形式は後方互換のため一時的に許可しています。両方送信して値が不一致の場合は `400 Bad Request` を返します。
-
-### HTTP Semantics
-
-- `400 Bad Request`: 無効なリクエスト形式、Provider/modelの不一致、または PII BLOCK
-- `401 Unauthorized`: APIキーの欠落または無効
-- `403 Forbidden`: 認証済みだが、テナントが一時停止状態、または Prompt Injection BLOCK
-- `429 Too Many Requests`: テナントのレートリミット（利用上限）超過
-- `502 Bad Gateway`: アップストリーム（LLMプロバイダ）の 4xx / 5xx エラー、または無効なレスポンス
-- `503 Service Unavailable`: タイムアウト / 接続エラー / サーキットブレーカーのオープン状態
-
-### Security & Policies
-
-テナントごとにセキュリティポリシー（PII アクション・インジェクションアクション）を制御可能です。
-
-- **`ALLOW`**: 何もせず通過。
-- **`WARN`**: リクエストは通過するが、監査ログに検知フラグを立てて記録。
-- **`MASK`**: (PII専用) リクエスト本文の該当文字列を `[EMAIL_REDACTED]` などにマスクして Provider へ送信。
-- **`BLOCK`**: PII は 400 Bad Request、Prompt Injection は 403 Forbidden で遮断。アップストリームへは送信しない。
-
-デフォルトでは PII は `MASK`、プロンプトインジェクションは `BLOCK` です。テナントの `pii_action` / `injection_action` が DB で設定されている場合は、テナント設定が優先されます。
-
-Prompt Injection Detection は NFKC・小文字化・format character 除去・空白正規化を行い、通常テキストと空白除去テキストの両方へカテゴリ別ルールを適用します。同一ルールはリクエスト内で一度だけ加点し、合計スコアが 70 以上、またはシステムプロンプト抽出・秘密情報窃取の高確度ルールに一致した場合に Prompt Injection と判定します。`injection_action=BLOCK` の場合は Provider へ送信せず、403 Forbidden で遮断します。
-
-監査ログには `injection_detected`、`injection_action`、`injection_rules`、`injection_score`、`injection_categories` を保存します。一致したユーザー入力そのものはルール情報として保存しません。
-
-> **Note:** PII BLOCK の優先順位は最上位となります。同一リクエスト内で PII とインジェクションが検知された場合、PII のアクションが BLOCK であれば即時エラーとなります。
-
-### Degraded Mode
-
-- fallback は 1 段のみです。`openai -> anthropic`、`anthropic -> openai`
-- fallback先と元のモデルに互換性がない場合は、fallback先のデフォルトモデルを使用します
-- fallback 対象は `timeout`, `connection error`, `upstream 5xx`, `breaker-open`
-- provider 4xx は fallback しません
-- `INVALID_RESPONSE` は upstream schema drift と mapper 不整合の両方を含み得るため、Sprint 3 では安全側で fallback 対象外にしています
-
----
-
-## ディレクトリ構成
-
-```text
-.
-├── .github/workflows/            # CI / AWS deploy workflow
-├── docker/                       # Prometheus / Grafana設定
-├── docs/                         # 設計・運用ドキュメント、ADR
-├── infra/aws/                    # TerraformによるAWS基盤
-├── src/
-│   ├── main/java/io/github/mlprototype/gateway/
-│   │   ├── api/                  # REST Controller
-│   │   ├── audit/                # Structured audit logging
-│   │   ├── content/              # PII / Injection filtering
-│   │   ├── filter/               # Trace / API Key / Rate Limit filters
-│   │   ├── provider/             # LLM Provider abstraction
-│   │   ├── router/               # Provider routing / fallback
-│   │   └── security/             # Tenant / API Key authentication
-│   ├── main/resources/           # Spring profiles / Flyway migration
-│   └── test/java/                # Unit / integration tests
-├── Dockerfile
-├── docker-compose.yml
-└── build.gradle
-```
-
----
-
-## 設定
-
-本システムでは、LLM APIキー、Gateway用APIキー、コンテンツセキュリティポリシー、PostgreSQL接続、Redis接続、Resilience4j Circuit Breaker、Swagger UIなどの設定を環境変数や設定ファイル（`application.yml`）で管理しています。
-
-主要な設定カテゴリは以下です。
-
-| カテゴリ | 主な設定内容 |
-| :--- | :--- |
-| LLM Provider | OpenAI / Anthropic APIキー、デフォルトモデル、タイムアウト秒数、最大トークン制限 |
-| Content Security | PII検知・プロンプトインジェクション検知時のデフォルトアクション制御（BLOCK / MASK / WARN / ALLOW） |
-| Database / Cache | PostgreSQL接続（テナント管理・非同期監査ログ永続化用）、Redis接続（テナント別レートリミット用） |
-| Resilience | Resilience4j Circuit Breaker設定（判定用スライディングウィンドウ、失敗閾値、除外例外など）とフォールバック制御 |
-| Observability / API Docs | Actuator/Prometheus連携（メトリクス公開）、JSON構造化ログ、Swagger UI / OpenAPIの有効化 |
-
-詳細な環境変数一覧とデフォルト値は [`docs/configuration.md`](docs/configuration.md) を参照してください。
-
-各デフォルト値は個人開発・検証環境向けの初期値であり、本番利用時は対象データ、レイテンシ要件、APIコスト、評価結果に応じて調整する想定です。
-
----
-
-## AWS Deployment & Cost Strategy
-
-Terraform で [AWS 基盤](infra/aws/) を管理し、ECS Fargate、ECR、CloudWatch、IAM、Security Group、Secrets Manager を組み合わせて Gateway を検証する。RDS PostgreSQL は起動検証時のみ有効化し、Redis と ALB も必要時だけ作成する。本番運用を意識した個人開発・検証構成であり、常時稼働する商用構成ではない。
-
-### State and Secrets
-
-- Terraform state は S3 remote backend で管理し、versioning、暗号化、public access block、`use_lockfile = true` を有効化する。
-- GitHub Actions の Terraform plan は remote state と AWS 実リソースを参照する。`-backend=false`、`-lock=false`、`-refresh=false` は使用しない。
-- API Key の実値は Secrets Manager へ直接登録し、Terraform state に保存しない。CI Role には `secretsmanager:GetSecretValue` を付与しない。
-
-### CI/CD Verification
-
-- `ci.yml` は全 push / pull request で `./gradlew test` と artifact build を実行する。
-- `deploy.yml` は対象パスを含む `main` への push と手動実行で、Terraform plan、Git SHA タグの ECR push、ECS Task Definition 更新を実行する。
-- デプロイ後はタスクを一時的に起動し、ECS Exec から `/actuator/health` を確認する。失敗時は直前の Task Definition と起動数へ自動 rollback する。
-- CI Runner の可変 IP に合わせて Security Group を広げず、コンテナ内部から health check する。
-
-### Zero-Idle Cost Control
-
-`desired_count = 0` を通常状態とし、検証後は ECS タスクを停止する。RDS、Redis、ALB はトグルを `false` に戻して選別削除し、ECR、Secrets Manager、IAM、remote state は次回検証のため保持する。
-
-詳細は [AWS Architecture](docs/infra/AWS_ARCHITECTURE.md)、[CI/CD Pipeline](docs/infra/CI_CD_PIPELINE.md)、[Security Model](docs/infra/SECURITY_MODEL.md)、[Cost Optimization Strategy](docs/infra/COST_OPTIMIZATION.md) を参照してください。
-
----
-
-## Documentation
-
-### Architecture and Operations
-
-- [AWS Architecture](docs/infra/AWS_ARCHITECTURE.md)
-- [CI/CD Pipeline](docs/infra/CI_CD_PIPELINE.md)
-- [Security Model](docs/infra/SECURITY_MODEL.md)
-- [Operations Runbook](docs/infra/OPERATIONS_RUNBOOK.md)
-- [Cost Optimization Strategy](docs/infra/COST_OPTIMIZATION.md)
-- [Terraform Deployment Guide](infra/aws/TERRAFORM_DEPLOYMENT_GUIDE.md)
-
-### Architecture Decision Records
-
-- [ADR-001: Use ECS Fargate](docs/adr/001-use-ecs-fargate.md)
-- [ADR-002: Use S3 Remote State](docs/adr/002-use-s3-remote-state.md)
-- [ADR-003: Use GitHub Actions OIDC](docs/adr/003-use-github-actions-oidc.md)
-- [ADR-004: Manage Secret Values Outside Terraform State](docs/adr/004-secrets-manager-without-secret-version.md)
-- [ADR-005: Adopt Zero-Idle Architecture](docs/adr/005-zero-idle-cost-strategy.md)
-- [ADR-006: Use ECS Exec for Smoke Test](docs/adr/006-ecs-exec-smoke-test.md)
-
-### Configuration
-
-- [Configuration Reference](docs/configuration.md)
-
----
-
-## Testing
-
-```bash
-# Unit + Integration tests (mock-based, no API call)
-./gradlew test
-
-# Local smoke test (Docker health / basic request)
-docker compose up -d
-source .env
-
-# 1. OpenAI (Default)
-curl -s http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $GATEWAY_API_KEY" \
-  -d '{"messages":[{"role":"user","content":"日本語で一言あいさつしてください"}],"max_tokens":10}'
-
-# 2. Anthropic
-curl -s http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $GATEWAY_API_KEY" \
-  -H "X-Gateway-Requested-Provider: anthropic" \
-  -d '{"messages":[{"role":"user","content":"2+2はいくつですか。日本語で短く答えてください。"}],"max_tokens":10}'
-
-# 3. Suspended tenant (403)
-curl -s http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: suspended-key-001" \
-  -d '{"messages":[{"role":"user","content":"こんにちは"}]}'
-
-# 4. Rate limit exceeded (429)
-for i in {1..5}; do
-  curl -i -s http://localhost:8080/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -H "X-API-Key: $GATEWAY_API_KEY" \
-    -d '{"messages":[{"role":"user","content":"疎通確認です"}],"max_tokens":5}'
-done
-
-# 5. PII blocked request (400)
-curl -i -s http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $GATEWAY_API_KEY" \
-  -d '{"messages":[{"role":"user","content":"私のメールアドレスは user@example.com です"}],"max_tokens":5}'
-```
-
----
-
-## Sprint Roadmap
-
-| Sprint | Focus | Status |
-|:---|:---|:---|
-| **1** | Gateway 骨格, OpenAI proxy, API Key 認証, trace/audit, Docker | ✅ Done |
-| **2** | Anthropic provider, tenant 認証 (DB), rate limiting, Redis | ✅ Done |
-| **3** | Circuit Breaker (Resilience4j), fallback routing | ✅ Done |
-| **4** | PII masking, prompt injection detection, audit DB 永続化 | ✅ Done |
-| **5** | Prometheus / Grafana dashboard | ✅ Done |
-
----
-
-## Current Status
-
-### Application Features
-
-- OpenAI / Anthropic の複数 Provider と OpenAI 互換 API
-- DB のテナント情報と SHA-256 hash を用いた API Key 認証
-- Redis fixed-window の rate limiting（Redis 障害時は fail-open）
-- Circuit Breaker と timeout / 5xx / breaker-open 時の single-step fallback
-- PII 検知・マスキング、Prompt Injection 検知、テナントごとのポリシー
-- リクエストのハッシュ、サニタイズ済みプレビュー、利用量を保存する非同期 Audit Log
-- Prometheus / Grafana、構造化ログ、local/dev 向け Swagger UI / OpenAPI
-
-### AWS / DevOps
-
-- Terraform 管理の AWS Infrastructure と ECS Fargate deployment
-- Git SHA タグによる ECR image push と CloudWatch Logs / Dashboard
-- S3 remote state、versioning、encryption、native locking
-- GitHub Actions OIDC と remote state を参照する Terraform plan
-- ECS Exec による内部 smoke test と失敗時の自動 rollback
-- Terraform state に Secret 値を保存しない Secrets Manager 運用
-- `desired_count = 0` を基本とする Zero-Idle cleanup strategy
-
----
-
-## 既知の制限
-
-| 分類 | 制約事項 |
-| :--- | :--- |
-| **Security** | ルールベースの実装であるため、PIIやプロンプトインジェクションの誤検知（False Positive）や検知漏れ（False Negative）が発生する可能性あり |
-| **Security** | 出力（レスポンス）側に対する情報の秘匿化（リダクション）は未実装 |
-| **Audit Log** | フェイルオープンかつ非同期で動作。現時点では、厳密な配信保証（Strong Delivery Guarantees）はスコープ外 |
-| **Authentication** | APIキーはDBにSHA-256ハッシュで保存。より強固なシークレット管理メカニズムよりも、決定論的な検索（Lookup）の簡便性を優先している |
-| **Routing** | シングルステップのみのフォールバック対応であり、コストやレイテンシを考慮した高度なルーティングは含まれていない |
-| **AWS Topology** | 個人開発・検証構成であり、商用本番運用済みの構成ではない。既定では低コスト優先の Public Subnet 検証構成を使う |
-| **AWS Services** | Redis と ALB は optional であり、デフォルトでは作成しない |
-| **Availability** | Private Subnet、WAF、Auto Scaling、Multi-AZ、厳密な SLA / DR、Blue-Green Deployment は未対応 |
-| **Providers** | AWS Bedrock Provider と Azure OpenAI Provider は未実装 |
-
----
-
-## 今後の展望
-
-以下は現時点で未実装だが、次のフェーズでの対応を検討している改善候補です。
-
-- **AWS Bedrock / Azure OpenAI Provider**: Provider 抽象化を活かしたクラウド LLM Provider の追加。
-- **Security scanning**: Trivy、Checkov、Dependabot を CI/CD に組み込み、依存関係・コンテナ・IaC を継続的に確認する。
-- **Production-like AWS topology**: Private Subnet、ALB、WAF、Auto Scaling、CloudWatch Alarm、Budget Alert を含む構成の検証。
-- **Admin UI**: React / TypeScript による最小限のテナント・ポリシー確認画面。
-- **AIベースのPII・プロンプトインジェクション検知**: ルールベースの検知から、軽量なローカルLLMや専用のGuardrailsモデルを用いた、コンテキスト依存の高度な検知への移行。
-- **レスポンス側の出力リダクション**: リクエスト内容だけでなく、LLMからのレスポンスに含まれるPIIや不適切な表現をリアルタイムで検知・マスキングする機能の追加。
-- **高信頼性監査ログの配信保証**: Fail-open設計の非同期ログ保存に加え、メッセージキュー（KafkaやRabbitMQ等）を導入し、厳密なログの配信保証（At-least-once）とトレーサビリティの向上を実現。
-- **ダイナミックかつインテリジェントなルーティング**: 静的なシングルステップ・フォールバックだけでなく、プロバイダーのリアルタイムなレイテンシ、コスト、エラー率、レートリミット上限を学習し、動的に最適なLLMルートを選択するインテリジェントルーティングの実装。
-- **シークレット管理の統合**: APIキーのハッシュ化によるインメモリDB管理から、HashiCorp VaultやクラウドのSecret Manager（AWS, GCP等）と統合した、より堅牢でスケーラブルな鍵管理。
+この呼び出しは実 Provider を利用します。Response の Trace ID・resolved Provider・fallback 使用有無で処理経路を確認できます。
+Local の [Swagger UI](http://localhost:8080/swagger-ui.html) / [OpenAPI](http://localhost:8080/v3/api-docs) に API 詳細、[Grafana](http://localhost:3000) に dashboard があります。
+設定の現行値は [application.yml](src/main/resources/application.yml) と [profile 設定](src/main/resources/) を参照してください。Compose は `.env` の content action を app へ渡し、省略時は PII `MASK` / Injection `BLOCK` を適用します。
+
+## Known Limitations
+
+| Area | 現在の制約 |
+| --- | --- |
+| Content Detection | ルールベースのため False Positive / False Negative がある。レスポンス側 redaction は未実装で、preview にも未検知の機密情報が残り得る |
+| Audit Delivery | 同期・fail-open。非同期保存や Strong Delivery Guarantee はない。認証・rate 拒否等を網羅しない |
+| Authentication | 無塩 SHA-256 による決定論的 lookup を優先。高エントロピー key と更新運用が必要。AWS は明示的な Tenant / Client provisioning が必要で、key rotation / revoke は自動化しない |
+| Rate Control | UTC 暦分の Fixed Window で境界 burst を許容。Redis 障害時は制限しない。`Retry-After` は残り時間ではなく固定 60 秒 |
+| API / Routing | 共通 DTO の chat のみで stream / tools 等は未実装。Model 検証は prefix 分類、fallback は一段で出力・cost・latency が変わり得る |
+| AWS Topology | 個人検証用の Public Subnet / public IP 構成。RDS も public accessibility が有効（DB ingress は ECS SG に限定）。Private Subnet / TLS 公開経路 / WAF は未実装 |
+| AWS Optional Services | Redis / ALB は optional・既定無効。RDS も既定無効だが起動には必要。AWS health は fail-open のRedisを必須条件から除外し、Redis稼働を証明しない |
+| CI/CD Verification | Smoke は明示的shell・HTTP成功後のmarkerを確認するhealth検証で、認証済みchatは別の明示的手順。実AWSのExec / 復元成功は別途検証が必要 |
+| Availability / Operations | Auto Scaling、Multi-AZ RDS、SLA / DR、Blue-Green は未対応。商用 Production で継続運用された実績を示すものではない |
+| Providers | OpenAI / Anthropic のみ。Bedrock / Azure Provider は未実装 |
+
+## Related Projects / Further Documentation
+
+| Project | 担う層 |
+| --- | --- |
+| [spec-rag-qa](https://github.com/mlprototype/spec-rag-qa) | 品質保証 / Evaluation |
+| [ai-agent-rag](https://github.com/mlprototype/ai-agent-rag) | 動的制御 / Orchestration / Control Plane |
+| **policy-aware-llm-gateway** | **運用統治 / Governance / Reliability** |
+
+- [AWS Architecture](docs/infra/AWS_ARCHITECTURE.md) / [CI/CD Pipeline](docs/infra/CI_CD_PIPELINE.md)
+- [Security Model](docs/infra/SECURITY_MODEL.md) / [Operations Runbook](docs/infra/OPERATIONS_RUNBOOK.md)
+- [Cost Strategy](docs/infra/COST_OPTIMIZATION.md) / [Terraform Deployment Guide](infra/aws/TERRAFORM_DEPLOYMENT_GUIDE.md)
+- [Configuration Source](src/main/resources/application.yml) / [Architecture Decision Records](docs/adr/)
+
+運用 docs は設計意図・手順の参照先です。現行挙動の確認には source / tests / Terraform / workflows を併せて参照してください。

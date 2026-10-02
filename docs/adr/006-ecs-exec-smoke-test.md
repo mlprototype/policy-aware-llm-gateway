@@ -16,9 +16,9 @@ GitHub Actions からデプロイ後の `/actuator/health` を確認し、起動
 
 ## Decision
 
-ECS Service で ECS Exec を有効化し、GitHub Actions の smoke test は外部公開エンドポイントへアクセスしない。Workflow は一時的に ECS タスクを 1 つ起動し、`aws ecs execute-command` で `gateway` コンテナ内の `http://127.0.0.1:8080/actuator/health` を確認する。現在のコンテナイメージには `wget` があるため、レスポンス内の `"status":"UP"` を確認する。
+ECS Service で ECS Exec を有効化し、GitHub Actions の smoke test は外部公開エンドポイントへアクセスしない。Workflow は一時的に ECS タスクを 1 つ起動し、`aws ecs execute-command` で `gateway` コンテナ内の `http://127.0.0.1:8080/actuator/health` を確認する。現在のコンテナイメージには `wget` があるため、明示的shell内で `wget --spider` のHTTP成功を確認し、その後に出力するmarkerをRunner側で検証する。CLIの終了コードだけに依存しない。AWS profileのRedis indicatorは、optional / fail-open dependencyのため全体healthから除外する。
 
-Workflow はデプロイ前の Task Definition ARN と `desired_count` を記録する。smoke test 成功時は元の起動数へ戻し、デプロイ後に失敗した場合は直前の Task Definition と元の起動数へロールバックする。これにより、CI Runner 向けに Security Group を広く開放しない。
+Workflow はデプロイ前の Task Definition ARN と `desired_count` を記録する。smoke test 成功時は元の起動数へ戻し、デプロイ後に失敗した場合は直前の Task Definition と元の起動数へロールバックし、service stabilityを期限付きで待つ。Deploy step自体の失敗も復元対象とし、成功時の起動数復元後も安定化を待つ。これにより、CI Runner 向けに Security Group を広く開放しない。
 
 ## Alternatives Considered
 

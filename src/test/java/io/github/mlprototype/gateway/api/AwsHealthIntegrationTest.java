@@ -1,0 +1,100 @@
+package io.github.mlprototype.gateway.api;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.http.HttpStatus;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.context.ApplicationContext;
+import io.github.mlprototype.gateway.ratelimit.RateLimiter;
+import io.github.mlprototype.gateway.security.VerificationBootstrapCommand;
+import io.github.mlprototype.gateway.security.VerificationClientProvisioner;
+import io.github.mlprototype.gateway.dto.ChatRequest;
+import io.github.mlprototype.gateway.dto.ChatResponse;
+import io.github.mlprototype.gateway.dto.Message;
+import io.github.mlprototype.gateway.provider.ProviderType;
+import io.github.mlprototype.gateway.router.ProviderExecutionResult;
+import io.github.mlprototype.gateway.router.ProviderRoutingService;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
+        "spring.datasource.url=${GATEWAY_TEST_DB_URL:jdbc:postgresql://localhost:5432/gateway_test}",
+        "spring.datasource.username=gateway",
+        "spring.datasource.password=gateway_test",
+        "spring.data.redis.host=127.0.0.1",
+        "spring.data.redis.port=9999",
+        "spring.data.redis.timeout=200ms",
+        "spring.data.redis.connect-timeout=200ms"
+})
+@ActiveProfiles("aws")
+@Import(AwsHealthIntegrationTest.ProvisioningTestConfig.class)
+class AwsHealthIntegrationTest {
+
+    @Autowired
+    private TestRestTemplate rest;
+
+    @Autowired
+    private RateLimiter rateLimiter;
+
+    @Autowired
+    private ApplicationContext context;
+
+    @Autowired private VerificationClientProvisioner provisioner;
+    @Autowired private JdbcTemplate jdbc;
+    @MockitoBean private ProviderRoutingService router;
+
+    @TestConfiguration
+    static class ProvisioningTestConfig {
+        @Bean
+        VerificationClientProvisioner provisioner(JdbcTemplate jdbc) {
+            return new VerificationClientProvisioner(jdbc);
+        }
+    }
+
+    @Test
+    void missingOptionalRedisDoesNotMakeAwsHealthDown() {
+        var response = rest.getForEntity("/actuator/health", String.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"status\":\"UP\"");
+        assertThat(rateLimiter.check("missing-redis", 60).isAvailable()).isFalse();
+        assertThat(context.getBeansOfType(VerificationBootstrapCommand.class)).isEmpty();
+    }
+
+    @Test
+    void explicitProvisioningEnablesAuthenticatedHttpChatWithoutLocalSeed() {
+        String tenant = "http-verification-" + UUID.randomUUID();
+        String key = UUID.randomUUID().toString();
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-API-Key", key);
+        var request = new HttpEntity<>(ChatRequest.builder()
+                .messages(List.of(new Message("user", "Hello"))).build(), headers);
+        assertThat(rest.postForEntity("/v1/chat/completions", request, String.class).getStatusCode())
+                .isEqualTo(HttpStatus.UNAUTHORIZED);
+        when(router.execute(any(), any(), any())).thenReturn(new ProviderExecutionResult(
+                ProviderType.OPENAI, ProviderType.OPENAI, false, null,
+                ChatResponse.builder().id("verification-response").model("test-model").build()));
+        try {
+            provisioner.provision(tenant, "http-client", key);
+            var response = rest.postForEntity("/v1/chat/completions", request, String.class);
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(response.getBody()).contains("verification-response");
+        } finally {
+            jdbc.update("DELETE FROM audit_logs WHERE tenant_id IN (SELECT CAST(id AS VARCHAR) FROM tenants WHERE name = ?)", tenant);
+            jdbc.update("DELETE FROM api_clients WHERE tenant_id IN (SELECT id FROM tenants WHERE name = ?)", tenant);
+            jdbc.update("DELETE FROM tenants WHERE name = ?", tenant);
+        }
+    }
+}

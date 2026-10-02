@@ -58,7 +58,7 @@ public class AuditLogger {
                     .injectionScore(event.getInjectionScore())
                     .injectionCategories(event.getInjectionCategories())
                     .requestHash(event.getRequestHash())
-                    .requestPreview(event.getRequestPreview())
+                    .requestPreview(AuditPreview.truncate(event.getRequestPreview()))
                     .build();
             auditLogRepository.save(entity);
         } catch (Exception e) {
@@ -116,7 +116,7 @@ public class AuditLogger {
             if (event.getInjectionCategories() != null) map.put("injection_categories", event.getInjectionCategories());
         }
         if (event.getRequestHash() != null) map.put("request_hash", event.getRequestHash());
-        if (event.getRequestPreview() != null) map.put("request_preview", event.getRequestPreview());
+        if (event.getRequestPreview() != null) map.put("request_preview", AuditPreview.truncate(event.getRequestPreview()));
         
         return map;
     }

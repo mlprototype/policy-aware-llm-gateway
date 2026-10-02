@@ -1,0 +1,6 @@
+spring:
+  main:
+    web-application-type: none
+  flyway:
+    # Never import local development credentials into verification databases.
+    locations: classpath:db/migration

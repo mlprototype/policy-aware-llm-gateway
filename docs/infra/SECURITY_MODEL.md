@@ -13,7 +13,7 @@
 
 ## Identity and Access Management
 
-GitHub Actions 用 Role は ECR push、ECS 更新・Exec、Terraform plan 用の S3 操作を担う。`iam:PassRole` は ECS の Task Execution Role と Task Role などに限定する。Task Execution Role は image 取得、CloudWatch Logs、タスク起動時のシークレット注入を担う。Task Role は Bedrock 呼び出しと ECS Exec の SSM メッセージチャネルを担う。現行の広いリソース指定は、本番適用時にモデル ARN や対象リソースへさらに絞る。
+GitHub Actions 用 Role は ECR push、ECS 更新・Exec、Terraform plan 用の S3 操作を担う。`iam:PassRole` は ECS の Task Execution Role と Task Role などに限定する。Task Execution Role は image 取得、CloudWatch Logs、タスク起動時のシークレット注入を担う。Task Role は ECS Exec の SSM メッセージチャネルを担う。未実装の Bedrock Provider 用の呼び出し権限は付与しない。
 
 ## GitHub Actions OIDC
 
@@ -21,7 +21,7 @@ GitHub Actions は OIDC の一時認証情報で Role を引き受け、静的 A
 
 ## Secret Management
 
-Terraform は Secrets Manager のシークレットコンテナだけを作成する。`aws_secretsmanager_secret_version` で値を管理せず、API Key は安全な運用手段で直接登録する。RDS の認証情報は RDS 管理シークレットを使い、`terraform.tfvars` に DB パスワードを渡さない。CI Role には `secretsmanager:GetSecretValue` を付与しない。
+Terraform は Secrets Manager のシークレットコンテナだけを作成する。`aws_secretsmanager_secret_version` で値を管理せず、API Key は安全な運用手段で直接登録する。RDS の認証情報は RDS 管理シークレットを使い、`terraform.tfvars` に DB パスワードを渡さない。CI Role には `secretsmanager:GetSecretValue` を付与しない。Gateway の認証は DB hash lookup であり、環境変数だけでは key は登録されない。検証用の明示的 `aws-bootstrap` process が task 内の key をhash化して登録する。既存 credential の上書き・停止解除は拒否する。
 
 ## Terraform State Security
 

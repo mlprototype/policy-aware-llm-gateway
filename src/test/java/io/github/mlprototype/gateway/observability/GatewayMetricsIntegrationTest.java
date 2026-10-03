@@ -14,13 +14,12 @@ import static org.assertj.core.api.Assertions.assertThat;
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
                 "spring.flyway.enabled=false",
-                "management.endpoints.web.exposure.include=*",
                 "management.endpoint.prometheus.enabled=true",
                 "management.prometheus.metrics.export.enabled=true",
                 "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration,org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration,org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration,org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration"
         }
 )
-@ActiveProfiles("test")
+@ActiveProfiles("local")
 class GatewayMetricsIntegrationTest {
 
     @Autowired

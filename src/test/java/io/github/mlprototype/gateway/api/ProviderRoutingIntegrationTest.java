@@ -44,6 +44,8 @@ class ProviderRoutingIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+    @Autowired private io.github.mlprototype.gateway.provider.openai.OpenAiProvider openAiProvider;
+    @Autowired private io.github.mlprototype.gateway.provider.anthropic.AnthropicProvider anthropicProvider;
 
     @Autowired
     private CircuitBreakerRegistry circuitBreakerRegistry;
@@ -250,6 +252,77 @@ class ProviderRoutingIntegrationTest {
 
         org.assertj.core.api.Assertions.assertThat(ANTHROPIC_SERVER.getRequestCount())
                 .isEqualTo(requestsBefore);
+    }
+
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("invalidResponses")
+    void invalidHttp200Is502AndNeverFallsBack(String provider, String body) throws Exception {
+        MockWebServer server = provider.equals("openai") ? OPENAI_SERVER : ANTHROPIC_SERVER;
+        MockWebServer other = provider.equals("openai") ? ANTHROPIC_SERVER : OPENAI_SERVER;
+        int otherRequests = other.getRequestCount();
+        server.enqueue(jsonResponse(200, body));
+        mockMvc.perform(post("/v1/chat/completions").contentType("application/json")
+                .header("X-API-Key", "test-gateway-key")
+                .header("X-Gateway-Requested-Provider", provider)
+                .content(requestBody().replace("\"model\": \"gpt-4o-mini\",", "")))
+                .andExpect(status().isBadGateway())
+                .andExpect(header().string("X-Gateway-Fallback-Used", "false"));
+        org.assertj.core.api.Assertions.assertThat(other.getRequestCount()).isEqualTo(otherRequests);
+        org.assertj.core.api.Assertions.assertThat(circuitBreakerRegistry.circuitBreaker(provider)
+                .getMetrics().getNumberOfFailedCalls()).isEqualTo(1);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"openai,400", "anthropic,400", "openai,503", "anthropic,503"})
+    void bothProvidersPreserveUpstreamErrorClassification(String provider, int statusCode) {
+        (provider.equals("openai") ? OPENAI_SERVER : ANTHROPIC_SERVER)
+                .enqueue(jsonResponse(statusCode, "{\"error\":{\"message\":\"fixture failure\"}}"));
+        io.github.mlprototype.gateway.provider.LlmProvider selected = provider.equals("openai")
+                ? openAiProvider : anthropicProvider;
+        var request = io.github.mlprototype.gateway.dto.ChatRequest.builder()
+                .messages(java.util.List.of(new io.github.mlprototype.gateway.dto.Message("user", "Hello"))).build();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> selected.complete(request))
+                .isInstanceOfSatisfying(io.github.mlprototype.gateway.exception.ProviderException.class, ex -> {
+                    org.assertj.core.api.Assertions.assertThat(ex.getFailureType()).isEqualTo(statusCode == 400
+                            ? io.github.mlprototype.gateway.exception.ProviderFailureType.UPSTREAM_4XX
+                            : io.github.mlprototype.gateway.exception.ProviderFailureType.UPSTREAM_5XX);
+                    org.assertj.core.api.Assertions.assertThat(ex.isFallbackEligible()).isEqualTo(statusCode == 503);
+                });
+    }
+
+    static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> invalidResponses() {
+        var result = new java.util.ArrayList<org.junit.jupiter.params.provider.Arguments>();
+        for (String provider : java.util.List.of("openai", "anthropic")) {
+            for (String body : java.util.List.of("", "null", "{}", "[]", "{malformed}",
+                    "{\"id\":\"id\",\"model\":\"model\"}")) {
+                result.add(org.junit.jupiter.params.provider.Arguments.of(provider, body));
+            }
+        }
+        for (String choices : java.util.List.of("[]", "[null]", "[{\"message\":{\"role\":\"assistant\"}}]",
+                "[{\"message\":{\"role\":\"user\",\"content\":\"text\"}}]")) {
+            result.add(org.junit.jupiter.params.provider.Arguments.of("openai",
+                    "{\"id\":\"id\",\"model\":\"model\",\"choices\":" + choices + "}"));
+        }
+        for (String content : java.util.List.of("[]", "[null]", "[{\"type\":\"tool_use\"}]",
+                "[{\"type\":\"text\"}]", "[{\"type\":\"text\",\"text\":1}]", "\"not-array\"")) {
+            result.add(org.junit.jupiter.params.provider.Arguments.of("anthropic",
+                    "{\"id\":\"id\",\"model\":\"model\",\"content\":" + content + "}"));
+        }
+        return result.stream();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"openai", "anthropic"})
+    void minimalTextResponseAllowsEmptyTextAndOptionalMetadata(String provider) throws Exception {
+        String payload = provider.equals("openai")
+                ? "{\"id\":\"id\",\"model\":\"model\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"\"}}]}"
+                : "{\"id\":\"id\",\"model\":\"model\",\"content\":[{\"type\":\"text\",\"text\":\"\"}]}";
+        (provider.equals("openai") ? OPENAI_SERVER : ANTHROPIC_SERVER).enqueue(jsonResponse(200, payload));
+        mockMvc.perform(post("/v1/chat/completions").contentType("application/json")
+                .header("X-API-Key", "test-gateway-key").header("X-Gateway-Requested-Provider", provider)
+                .content(requestBody().replace("\"model\": \"gpt-4o-mini\",", ""))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.choices[0].message.content").value(""));
     }
 
     private static MockWebServer startServer() {

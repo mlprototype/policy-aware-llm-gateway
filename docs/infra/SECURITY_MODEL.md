@@ -31,6 +31,8 @@ state は S3 remote backend で管理し、versioning、暗号化、public acces
 
 ECS は低コスト検証のため Public Subnet を使うが、Security Group の `allowed_ingress_cidr` で接続元を制限する。CI Runner の IP は変動するため、CI 用に公開ポートを開放しない。RDS のインバウンドは ECS タスクの Security Group に限定する。本番適用時は Private Subnet、ALB、WAF、VPC Endpoint または NAT Gateway を検討する。
 
+AWS / non-localのActuator Web公開はhealth / infoのみとし、metrics / prometheusは公開しない。localのみComposeのPrometheus scrapeを許容する。認証除外は環境別の明示的pathに限定し、将来追加されるendpointは自動で除外しない。health / infoへの到達範囲は引き続きSecurity Group等のnetwork policyで制御する。
+
 ## ECS Runtime Security
 
 シークレットを image や通常の環境変数定義へ焼き込まず、起動時に注入する。ECS Exec は必要な主体だけに許可する。CloudWatch Logs にも機密値を出力しない実装と運用が必要である。

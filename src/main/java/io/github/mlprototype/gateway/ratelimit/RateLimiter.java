@@ -3,9 +3,10 @@ package io.github.mlprototype.gateway.ratelimit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
+import java.util.List;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -25,6 +26,15 @@ public class RateLimiter {
 
     private final StringRedisTemplate redisTemplate;
 
+    private static final long COUNTER_TTL_SECONDS = 120;
+    private static final DefaultRedisScript<Long> INCREMENT_WITH_TTL = new DefaultRedisScript<>("""
+            local count = redis.call('INCR', KEYS[1])
+            if redis.call('TTL', KEYS[1]) < 0 then
+                redis.call('EXPIRE', KEYS[1], ARGV[1])
+            end
+            return count
+            """, Long.class);
+
     private static final DateTimeFormatter MINUTE_FORMAT =
             DateTimeFormatter.ofPattern("yyyyMMddHHmm");
 
@@ -40,15 +50,11 @@ public class RateLimiter {
             String minute = Instant.now().atOffset(ZoneOffset.UTC).format(MINUTE_FORMAT);
             String key = "rate_limit:" + tenantId + ":" + minute;
 
-            Long count = redisTemplate.opsForValue().increment(key);
+            Long count = redisTemplate.execute(INCREMENT_WITH_TTL, List.of(key),
+                    Long.toString(COUNTER_TTL_SECONDS));
             if (count == null) {
-                log.warn("Redis INCR returned null for key={}", key);
+                log.warn("Redis counter script returned null for key={}", key);
                 return RateLimitResult.unavailable();
-            }
-
-            // Set TTL on first increment
-            if (count == 1L) {
-                redisTemplate.expire(key, Duration.ofSeconds(120));
             }
 
             int remaining = Math.max(0, limitPerMinute - count.intValue());

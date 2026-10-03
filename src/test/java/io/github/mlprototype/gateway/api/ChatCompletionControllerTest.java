@@ -35,6 +35,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(ChatCompletionController.class)
+@org.springframework.context.annotation.Import(io.github.mlprototype.gateway.filter.ActuatorEndpointPolicy.class)
 class ChatCompletionControllerTest {
 
     @Autowired
@@ -190,6 +191,53 @@ class ChatCompletionControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isUnauthorized());
+    }
+
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+        "{\"messages\":null}", "{\"messages\":[]}", "{\"messages\":[null]}",
+        "{\"messages\":[{\"role\":null,\"content\":\"Hello\"}]}",
+        "{\"messages\":[{\"role\":\" \",\"content\":\"Hello\"}]}",
+        "{\"messages\":[{\"role\":\"tool\",\"content\":\"Hello\"}]}",
+        "{\"messages\":[{\"role\":\"user\",\"content\":null}]}",
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"max_tokens\":-1}",
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"max_tokens\":0}"
+    })
+    void malformedInputReturns400BeforeContentInspectionOrProvider(String body) throws Exception {
+        mockMvc.perform(post("/v1/chat/completions")
+                .contentType(MediaType.APPLICATION_JSON).header("X-API-Key", "test-gateway-key").content(body))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(contentSecurityService, providerRoutingService, auditLogger);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"system", "user", "assistant"})
+    void supportedRolesAndEmptyContentRemainValid(String role) throws Exception {
+        when(providerRoutingService.execute(any(), any(), any())).thenReturn(
+                new ProviderExecutionResult(ProviderType.OPENAI, ProviderType.OPENAI, false, null, createResponse()));
+        mockMvc.perform(post("/v1/chat/completions").contentType(MediaType.APPLICATION_JSON)
+                .header("X-API-Key", "test-gateway-key")
+                .content("{\"messages\":[{\"role\":\"" + role + "\",\"content\":\"\"}],\"max_tokens\":1}"))
+                .andExpect(status().isOk());
+    }
+
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {99, 100, 101, 1000})
+    void modelLengthIsValidatedBeforeContentInspectionOrProvider(int length) throws Exception {
+        if (length <= 100) {
+            when(providerRoutingService.execute(any(), any(), any())).thenReturn(
+                    new ProviderExecutionResult(ProviderType.OPENAI, ProviderType.OPENAI, false, null, createResponse()));
+        }
+        mockMvc.perform(post("/v1/chat/completions").contentType(MediaType.APPLICATION_JSON)
+                .header("X-API-Key", "test-gateway-key")
+                .content("{\"model\":\"" + "m".repeat(length)
+                        + "\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}"))
+                .andExpect(length <= 100 ? status().isOk() : status().isBadRequest());
+        if (length > 100) {
+            org.mockito.Mockito.verifyNoInteractions(contentSecurityService, providerRoutingService, auditLogger);
+        }
     }
 
     private ChatResponse createResponse() {

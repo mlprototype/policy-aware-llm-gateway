@@ -104,7 +104,7 @@ aws ecs execute-command --cluster <ecs-cluster> --task <running-task-arn> \
 
 ## Check Logs and Metrics
 
-失敗時は CloudWatch Logs、ECS events、Stopped reason、RDS status、GitHub Actions logs を確認する。Dashboard では CPU、メモリ、task 数、ログを確認する。
+失敗時は CloudWatch Logs、ECS events、Stopped reason、RDS status、GitHub Actions logs を確認する。Dashboard では CPU、メモリ、ログを確認する。Task 数のwidgetは`enable_container_insights=true`時のみ表示し、`ECS/ContainerInsights`を参照する。既定は無効で、opt-inには追加CloudWatch費用が伴う。無効時のZero-Idle確認は`aws ecs describe-services`のdesiredCount / runningCountで行う。実AWSでのmetric出力は別途検証する。
 
 ## Rollback Procedure
 

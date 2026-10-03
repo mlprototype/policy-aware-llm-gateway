@@ -21,3 +21,10 @@ springdoc:
 logging:
   level:
     io.github.mlprototype.gateway: DEBUG
+
+# Compose Prometheus scrapes the local gateway without API credentials.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus

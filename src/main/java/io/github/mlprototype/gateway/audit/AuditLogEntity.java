@@ -24,7 +24,7 @@ public class AuditLogEntity {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "trace_id", nullable = false, length = 64)
+    @Column(name = "trace_id", nullable = false, length = AuditTraceId.MAX_LENGTH)
     private String traceId;
 
     @Column(name = "tenant_id", nullable = false, length = 64)
@@ -39,7 +39,7 @@ public class AuditLogEntity {
     @Column(name = "resolved_provider", length = 20)
     private String resolvedProvider;
 
-    @Column(length = 100)
+    @Column(length = AuditModel.MAX_LENGTH)
     private String model;
 
     @Column(name = "status_code", nullable = false)

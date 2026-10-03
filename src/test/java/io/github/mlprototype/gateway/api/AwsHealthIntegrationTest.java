@@ -74,23 +74,45 @@ class AwsHealthIntegrationTest {
     }
 
     @Test
+    void awsDoesNotExposeMetricsOrPrometheus() {
+        var endpoints = context.getBean(org.springframework.boot.actuate.endpoint.web.WebEndpointsSupplier.class)
+                .getEndpoints().stream().map(endpoint -> endpoint.getEndpointId().toString()).toList();
+        assertThat(endpoints).contains("health", "info").doesNotContain("metrics", "prometheus");
+        for (String path : List.of("/actuator/metrics", "/actuator/prometheus", "/actuator/env")) {
+            assertThat(rest.getForEntity(path, String.class).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        }
+    }
+
+    @Test
     void explicitProvisioningEnablesAuthenticatedHttpChatWithoutLocalSeed() {
         String tenant = "http-verification-" + UUID.randomUUID();
         String key = UUID.randomUUID().toString();
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-API-Key", key);
+        headers.set("X-Request-Id", "x".repeat(65));
         var request = new HttpEntity<>(ChatRequest.builder()
                 .messages(List.of(new Message("user", "Hello"))).build(), headers);
         assertThat(rest.postForEntity("/v1/chat/completions", request, String.class).getStatusCode())
                 .isEqualTo(HttpStatus.UNAUTHORIZED);
         when(router.execute(any(), any(), any())).thenReturn(new ProviderExecutionResult(
                 ProviderType.OPENAI, ProviderType.OPENAI, false, null,
-                ChatResponse.builder().id("verification-response").model("test-model").build()));
+                ChatResponse.builder().id("verification-response").model("m".repeat(101)).build()));
         try {
             provisioner.provision(tenant, "http-client", key);
             var response = rest.postForEntity("/v1/chat/completions", request, String.class);
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-            assertThat(response.getBody()).contains("verification-response");
+            assertThat(response.getBody()).contains("verification-response").contains("m".repeat(101));
+            String trace = response.getHeaders().getFirst("X-Gateway-Trace-Id");
+            assertThat(trace).hasSizeLessThanOrEqualTo(64).isNotEqualTo("x".repeat(65));
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM audit_logs WHERE trace_id = ?", Long.class, trace))
+                    .isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT model FROM audit_logs WHERE trace_id = ?", String.class, trace))
+                    .isEqualTo("m".repeat(100));
+            // Valid credentials still cannot reach endpoints excluded from the AWS exposure list.
+            for (String path : List.of("/actuator/metrics", "/actuator/prometheus")) {
+                assertThat(rest.exchange(path, org.springframework.http.HttpMethod.GET,
+                        new HttpEntity<>(headers), String.class).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+            }
         } finally {
             jdbc.update("DELETE FROM audit_logs WHERE tenant_id IN (SELECT CAST(id AS VARCHAR) FROM tenants WHERE name = ?)", tenant);
             jdbc.update("DELETE FROM api_clients WHERE tenant_id IN (SELECT id FROM tenants WHERE name = ?)", tenant);

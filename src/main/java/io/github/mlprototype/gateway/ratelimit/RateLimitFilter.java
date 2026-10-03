@@ -3,6 +3,7 @@ package io.github.mlprototype.gateway.ratelimit;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.mlprototype.gateway.dto.ErrorResponse;
 import io.github.mlprototype.gateway.filter.TraceIdFilter;
+import io.github.mlprototype.gateway.filter.ActuatorEndpointPolicy;
 import io.github.mlprototype.gateway.observability.GatewayMetrics;
 import io.github.mlprototype.gateway.security.RequestContext;
 import io.github.mlprototype.gateway.security.RequestContextHolder;
@@ -38,12 +39,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private final RateLimiter rateLimiter;
     private final ObjectMapper objectMapper;
+    private final ActuatorEndpointPolicy actuatorEndpointPolicy;
     private final GatewayMetrics gatewayMetrics;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
-        return path.startsWith("/actuator")
+        return actuatorEndpointPolicy.isPublic(path)
                 || path.startsWith("/swagger-ui")
                 || path.equals("/swagger-ui.html")
                 || path.startsWith("/v3/api-docs")

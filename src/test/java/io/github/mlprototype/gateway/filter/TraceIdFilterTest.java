@@ -54,4 +54,37 @@ class TraceIdFilterTest {
 
         assertThat(MDC.get(TraceIdFilter.MDC_TRACE_ID)).isNull();
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "a", "request-ID_1.2:part", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    })
+    void safeIdsArePreservedAcrossAllCorrelationSurfaces(String supplied) throws Exception {
+        assertCorrelation(supplied, true);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.NullAndEmptySource
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            " ", "   ", "unsafe id", "日本語", "id/part", "id\npart",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    })
+    void invalidIdsAreReplacedWithoutRejectingRequest(String supplied) throws Exception {
+        assertCorrelation(supplied, false);
+    }
+
+    private void assertCorrelation(String supplied, boolean preserve) throws Exception {
+        var request = new MockHttpServletRequest();
+        if (supplied != null) request.addHeader(TraceIdFilter.REQUEST_ID_HEADER, supplied);
+        var response = new MockHttpServletResponse();
+        filter.doFilterInternal(request, response, (req, res) -> {
+            String trace = response.getHeader(TraceIdFilter.TRACE_ID_HEADER);
+            assertThat(req.getAttribute(TraceIdFilter.MDC_TRACE_ID)).isEqualTo(trace);
+            assertThat(MDC.get(TraceIdFilter.MDC_TRACE_ID)).isEqualTo(trace);
+            assertThat(trace).hasSizeLessThanOrEqualTo(64);
+            if (preserve) assertThat(trace).isEqualTo(supplied);
+            else assertThat(trace).matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+        });
+        assertThat(MDC.get(TraceIdFilter.MDC_TRACE_ID)).isNull();
+    }
+
 }

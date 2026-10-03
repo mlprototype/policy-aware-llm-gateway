@@ -34,7 +34,7 @@ class RateLimitFilterTest {
 
     @BeforeEach
     void setUp() {
-        filter = new RateLimitFilter(rateLimiter, objectMapper, gatewayMetrics);
+        filter = new RateLimitFilter(rateLimiter, objectMapper, new io.github.mlprototype.gateway.filter.ActuatorEndpointPolicy(new org.springframework.mock.env.MockEnvironment()), gatewayMetrics);
         RequestContextHolder.set(new RequestContext("tenant-1", "client-1", 60, io.github.mlprototype.gateway.content.PiiAction.MASK, io.github.mlprototype.gateway.content.InjectionAction.WARN));
     }
 

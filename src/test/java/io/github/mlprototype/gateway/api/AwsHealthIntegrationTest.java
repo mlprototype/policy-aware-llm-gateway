@@ -96,16 +96,18 @@ class AwsHealthIntegrationTest {
                 .isEqualTo(HttpStatus.UNAUTHORIZED);
         when(router.execute(any(), any(), any())).thenReturn(new ProviderExecutionResult(
                 ProviderType.OPENAI, ProviderType.OPENAI, false, null,
-                ChatResponse.builder().id("verification-response").model("test-model").build()));
+                ChatResponse.builder().id("verification-response").model("m".repeat(101)).build()));
         try {
             provisioner.provision(tenant, "http-client", key);
             var response = rest.postForEntity("/v1/chat/completions", request, String.class);
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-            assertThat(response.getBody()).contains("verification-response");
+            assertThat(response.getBody()).contains("verification-response").contains("m".repeat(101));
             String trace = response.getHeaders().getFirst("X-Gateway-Trace-Id");
             assertThat(trace).hasSizeLessThanOrEqualTo(64).isNotEqualTo("x".repeat(65));
             assertThat(jdbc.queryForObject("SELECT count(*) FROM audit_logs WHERE trace_id = ?", Long.class, trace))
                     .isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT model FROM audit_logs WHERE trace_id = ?", String.class, trace))
+                    .isEqualTo("m".repeat(100));
             // Valid credentials still cannot reach endpoints excluded from the AWS exposure list.
             for (String path : List.of("/actuator/metrics", "/actuator/prometheus")) {
                 assertThat(rest.exchange(path, org.springframework.http.HttpMethod.GET,

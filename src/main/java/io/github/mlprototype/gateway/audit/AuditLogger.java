@@ -39,7 +39,7 @@ public class AuditLogger {
                     .clientId(event.getClientId())
                     .requestedProvider(event.getRequestedProvider() != null ? event.getRequestedProvider() : event.getProvider())
                     .resolvedProvider(event.getResolvedProvider() != null ? event.getResolvedProvider() : event.getProvider())
-                    .model(event.getModel())
+                    .model(AuditModel.truncate(event.getModel()))
                     .statusCode(event.getStatusCode())
                     .status(event.getStatus())
                     .latencyMs(event.getLatencyMs())

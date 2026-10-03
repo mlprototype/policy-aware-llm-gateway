@@ -27,6 +27,9 @@ class ProviderResponseValidatorTest {
     @EnumSource(ProviderType.class)
     void optionalMetadataAndEmptyTextRemainValid(ProviderType provider) {
         assertThat(ProviderResponseValidator.validate(response("id", "model"), provider)).isNotNull();
+        var longModel = response("id", "m".repeat(101));
+        assertThat(ProviderResponseValidator.validate(longModel, provider)).isSameAs(longModel);
+        assertThat(longModel.getModel()).hasSize(101);
     }
 
     private ChatResponse response(String id, String model) {

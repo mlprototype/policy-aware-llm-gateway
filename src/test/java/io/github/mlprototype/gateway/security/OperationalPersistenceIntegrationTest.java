@@ -113,6 +113,24 @@ class OperationalPersistenceIntegrationTest {
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("another client");
     }
 
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+            "success,100", "success,101", "success,1000",
+            "blocked,100", "blocked,101", "blocked,1000",
+            "error,100", "error,101", "error,1000"
+    })
+    void auditModelFitsExistingColumnForEveryEventStatus(String status, int length) {
+        String trace = UUID.randomUUID().toString();
+        String model = "m".repeat(length);
+        var event = AuditEvent.builder().traceId(trace).tenantId("test-tenant").clientId("test-client")
+                .status(status).statusCode(status.equals("success") ? 200 : 400).model(model).build();
+        audit.log(event);
+        entityManager.flush();
+        assertThat(jdbc.queryForObject("SELECT model FROM audit_logs WHERE trace_id = ?", String.class, trace))
+                .isEqualTo(model.substring(0, Math.min(length, 100)));
+        assertThat(event.getModel()).isEqualTo(model);
+    }
+
     private void assertPersistedPreview(String input, String expected) {
         String trace = UUID.randomUUID().toString();
         audit.log(AuditEvent.builder().traceId(trace).tenantId("test-tenant").clientId("test-client")

@@ -222,6 +222,24 @@ class ChatCompletionControllerTest {
                 .andExpect(status().isOk());
     }
 
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {99, 100, 101, 1000})
+    void modelLengthIsValidatedBeforeContentInspectionOrProvider(int length) throws Exception {
+        if (length <= 100) {
+            when(providerRoutingService.execute(any(), any(), any())).thenReturn(
+                    new ProviderExecutionResult(ProviderType.OPENAI, ProviderType.OPENAI, false, null, createResponse()));
+        }
+        mockMvc.perform(post("/v1/chat/completions").contentType(MediaType.APPLICATION_JSON)
+                .header("X-API-Key", "test-gateway-key")
+                .content("{\"model\":\"" + "m".repeat(length)
+                        + "\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}"))
+                .andExpect(length <= 100 ? status().isOk() : status().isBadRequest());
+        if (length > 100) {
+            org.mockito.Mockito.verifyNoInteractions(contentSecurityService, providerRoutingService, auditLogger);
+        }
+    }
+
     private ChatResponse createResponse() {
         return ChatResponse.builder()
                 .id("chatcmpl-test")

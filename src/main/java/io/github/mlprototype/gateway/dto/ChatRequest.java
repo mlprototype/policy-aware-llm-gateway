@@ -1,11 +1,13 @@
 package io.github.mlprototype.gateway.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.github.mlprototype.gateway.audit.AuditModel;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -24,6 +26,7 @@ import java.util.List;
 public class ChatRequest {
 
     @Schema(description = "利用するモデル名。省略時はプロバイダごとのデフォルトモデルを使用します。", example = "gpt-4o-mini")
+    @Size(max = AuditModel.MAX_LENGTH, message = "model must not exceed 100 characters")
     private String model;
 
     @NotNull(message = "messages must not be null")

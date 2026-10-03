@@ -39,7 +39,7 @@ public class AuditLogEntity {
     @Column(name = "resolved_provider", length = 20)
     private String resolvedProvider;
 
-    @Column(length = 100)
+    @Column(length = AuditModel.MAX_LENGTH)
     private String model;
 
     @Column(name = "status_code", nullable = false)

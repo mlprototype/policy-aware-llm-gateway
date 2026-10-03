@@ -40,11 +40,12 @@ public class ApiKeyFilter extends OncePerRequestFilter {
 
     private final AuthenticationService authenticationService;
     private final ObjectMapper objectMapper;
+    private final ActuatorEndpointPolicy actuatorEndpointPolicy;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
-        return path.startsWith("/actuator")
+        return actuatorEndpointPolicy.isPublic(path)
                 || path.startsWith("/swagger-ui")
                 || path.equals("/swagger-ui.html")
                 || path.startsWith("/v3/api-docs")

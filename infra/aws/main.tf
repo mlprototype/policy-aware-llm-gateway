@@ -263,6 +263,11 @@ resource "aws_iam_role_policy_attachment" "ecs_task_exec" {
 
 resource "aws_ecs_cluster" "main" {
   name = "${var.project_name}-cluster"
+
+  setting {
+    name  = "containerInsights"
+    value = var.enable_container_insights ? "enabled" : "disabled"
+  }
 }
 
 # ECS タスク定義

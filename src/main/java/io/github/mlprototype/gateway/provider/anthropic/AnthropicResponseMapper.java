@@ -26,15 +26,19 @@ public class AnthropicResponseMapper {
     @SuppressWarnings("unchecked")
     public ChatResponse toChatResponse(Map<String, Object> anthropicResponse) {
         // Extract text from content blocks
-        String text = "";
+        StringBuilder text = new StringBuilder();
+        boolean hasText = false;
         List<Map<String, Object>> contentBlocks =
                 (List<Map<String, Object>>) anthropicResponse.get("content");
         if (contentBlocks != null && !contentBlocks.isEmpty()) {
-            // Use first text block
+            // Preserve every text block without inserting characters that were not returned upstream.
             for (Map<String, Object> block : contentBlocks) {
                 if ("text".equals(block.get("type"))) {
-                    text = (String) block.get("text");
-                    break;
+                    if (!(block.get("text") instanceof String blockText)) {
+                        throw new IllegalArgumentException("Text block must contain a string");
+                    }
+                    text.append(blockText);
+                    hasText = true;
                 }
             }
         }
@@ -62,7 +66,7 @@ public class AnthropicResponseMapper {
                                 .index(0)
                                 .message(Message.builder()
                                         .role("assistant")
-                                        .content(text)
+                                        .content(hasText ? text.toString() : null)
                                         .build())
                                 .finishReason(mapStopReason(
                                         (String) anthropicResponse.get("stop_reason")))

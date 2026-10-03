@@ -38,7 +38,7 @@ class ApiKeyFilterTest {
     void setUp() {
         objectMapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        filter = new ApiKeyFilter(authenticationService, objectMapper);
+        filter = new ApiKeyFilter(authenticationService, objectMapper, new ActuatorEndpointPolicy(new org.springframework.mock.env.MockEnvironment()));
     }
 
     @Test

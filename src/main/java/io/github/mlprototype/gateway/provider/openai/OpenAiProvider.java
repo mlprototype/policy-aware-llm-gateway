@@ -7,6 +7,7 @@ import io.github.mlprototype.gateway.provider.LlmProvider;
 import io.github.mlprototype.gateway.provider.ProviderErrorDetailExtractor;
 import io.github.mlprototype.gateway.provider.ProviderFailureClassifier;
 import io.github.mlprototype.gateway.provider.ProviderType;
+import io.github.mlprototype.gateway.provider.ProviderResponseValidator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatusCode;
@@ -68,11 +69,7 @@ public class OpenAiProvider implements LlmProvider {
                     })
                     .body(ChatResponse.class);
 
-            // 正常なHTTPステータス(200)であっても、ボディが空でデシリアライズできない場合は
-            // 後続処理でNullPointerExceptionを防ぐためにここで明示的にバリデーションを行います。
-            if (response == null) {
-                throw failureClassifier.invalidResponse(ProviderType.OPENAI, "Empty response from openai", null);
-            }
+            ProviderResponseValidator.validate(response, ProviderType.OPENAI);
 
             log.debug("Received response from OpenAI: id={}", response != null ? response.getId() : "null");
             return response;

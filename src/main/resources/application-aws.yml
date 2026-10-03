@@ -32,6 +32,10 @@ logging:
 
 # Redis rate control is optional and fail-open; DB health remains required.
 management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
   health:
     redis:
       enabled: false

@@ -13,7 +13,7 @@ resource "aws_cloudwatch_dashboard" "ecs_gateway" {
   dashboard_name = "${var.project_name}-${var.environment}-dashboard"
 
   dashboard_body = jsonencode({
-    widgets = [
+    widgets = concat([
       # 1. ECS CPU使用率
       {
         type   = "metric"
@@ -48,23 +48,6 @@ resource "aws_cloudwatch_dashboard" "ecs_gateway" {
           title  = "ECS Fargate - Memory Utilization (%)"
         }
       },
-      # 3. 起動タスク数 (desired_count=0のスケール確認用)
-      {
-        type   = "metric"
-        x      = 0
-        y      = 6
-        width  = 12
-        height = 6
-        properties = {
-          metrics = [
-            ["AWS/ECS", "RunningTaskCount", "ServiceName", aws_ecs_service.app.name, "ClusterName", aws_ecs_cluster.main.name]
-          ]
-          period = 60
-          stat   = "Maximum"
-          region = var.aws_region
-          title  = "ECS Active Running Tasks (Zero-Idle Check)"
-        }
-      },
       # 4. CloudWatch Logs Insights (直近ログプレビュー)
       {
         type   = "log"
@@ -78,6 +61,24 @@ resource "aws_cloudwatch_dashboard" "ecs_gateway" {
           title  = "CloudWatch Logs - Latest Gateway Application Logs"
         }
       }
-    ]
+      ], var.enable_container_insights ? [
+      # 3. 起動タスク数 (desired_count=0のスケール確認用)
+      {
+        type   = "metric"
+        x      = 0
+        y      = 6
+        width  = 12
+        height = 6
+        properties = {
+          metrics = [
+            ["ECS/ContainerInsights", "RunningTaskCount", "ServiceName", aws_ecs_service.app.name, "ClusterName", aws_ecs_cluster.main.name]
+          ]
+          period = 60
+          stat   = "Maximum"
+          region = var.aws_region
+          title  = "ECS Active Running Tasks (Zero-Idle Check)"
+        }
+      }
+    ] : [])
   })
 }

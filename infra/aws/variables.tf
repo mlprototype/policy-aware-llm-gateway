@@ -111,3 +111,9 @@ variable "ecr_image_retention_count" {
   default     = 3 # 最新3世代のみ保持してストレージコストを削減
   description = "ECRに保管し続けるコンテナイメージの最大世代数"
 }
+
+variable "enable_container_insights" {
+  type        = bool
+  default     = false
+  description = "Opt in to ECS Container Insights and the RunningTaskCount widget; additional CloudWatch charges apply."
+}

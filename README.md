@@ -68,12 +68,12 @@ AWS の構成は後述の Operational Verification と既存ドキュメント�
 
 `POST /v1/chat/completions` の主な判定順序は次のとおりです。
 
-1. **Trace / Latency** — `X-Request-Id` があれば採用し、なければ UUID を生成。MDC と response header に Trace ID を設定し、filter chain 全体の時間を計測します。
+1. **Trace / Latency** — `X-Request-Id` は1〜64文字のASCII英数字・`-_.:`のみ採用し、未指定・不正値は UUID に置換。MDC と response header に Trace ID を設定し、filter chain 全体の時間を計測します。
 2. **Authentication / Tenant Context** — API Key hash から ACTIVE Client と Tenant を取得。無効な key は 401、SUSPENDED Tenant は 403。Tenant / Client ID、rate limit、content action を後段へ渡し、終了時に Context を消去します。
-3. **Rate Control** — Tenant ID と UTC の暦分を Redis key にして `INCR`。上限超過は 429 で止め、残数ヘッダを返します。Redis 障害時は制御を通過させ、rate ヘッダを省略します。
-4. **Content Security** — リクエスト DTO の検証後、PII と Injection を元の本文で検知。両方が BLOCK 条件を満たす場合は PII を優先します。MASK は新しい本文へ適用し、BLOCK は Provider 選択・呼び出し前に拒否します。
+3. **Rate Control** — Tenant ID と UTC の暦分を Redis key にし、Luaで `INCR` とTTL保証（未設定なら120秒へ修復）を原子的に実行。上限超過は 429 で止め、残数ヘッダを返します。Redis 障害時は制御を通過させ、rate ヘッダを省略します。
+4. **Content Security** — 非空のmessages・非null要素とcontent・`system/user/assistant` role・指定時に正の`max_tokens`をDTO境界で検証し、不正入力は400。空文字contentは許容。検証後、PII と Injection を元の本文で検知。両方が BLOCK 条件を満たす場合は PII を優先します。MASK は新しい本文へ適用し、BLOCK は Provider 選択・呼び出し前に拒否します。
 5. **Provider Selection** — `X-Gateway-Requested-Provider` または既定の `openai` を解決。Provider registry と model / message 条件を確認し、不一致は 400 で拒否します。
-6. **Invocation / Circuit Breaker** — Provider ごとの mapper と HTTP client で呼び出します。接続 timeout は 5 秒、read timeout は既定 30 秒。Circuit Breaker は Provider ごとに独立します。
+6. **Invocation / Circuit Breaker** — Provider ごとの mapper と HTTP client で呼び出します。接続 timeout は 5 秒、read timeout は既定 30 秒。Circuit Breaker は Provider ごとに独立します。HTTP 200でもid / model / choices / assistant textのcontractを満たさなければ`INVALID_RESPONSE`（502、fallbackなし）。Anthropicの全text blockは順序通り直接連結します。
 7. **Selective Fallback** — 対象 failure ならもう一方の Provider を一度だけ試行。互換性のない model は fallback 先の既定値に切り替え、必要な message 条件を満たさなければ fallback を行いません。
 8. **Audit / Observability** — Controller が成功・content block・routing error の event を記録。Provider / fallback / security の metrics と Trace により、実際の経路と判定を追跡します。
 
@@ -155,7 +155,7 @@ AWS は、この Gateway の配備・secret 注入・観測・復旧を検証対
 - **Rollback** — deploy step を実行した後の失敗で、記録した直前の Task Definition / desired count への復元を要求し、service stability を期限付きで確認。Deploy step 自体の失敗も復元対象とし、成功時の起動数復元後も安定化を待つ。
 - **Zero-Idle** — 既定は `desired_count = 0`、RDS / Redis / ALB 無効。検証後の選別削除は運用手順で実施し、ECR / Secrets / IAM / state を保持するため費用ゼロを保証するものではありません。
 
-CloudWatch はアプリログと ECS の CPU / memory 等を観測する構成です。アプリの Prometheus metrics を CloudWatch へ転送する設定は含みません。
+CloudWatch はアプリログと ECS の CPU / memory を観測します。`enable_container_insights=false`が既定で、opt-in時のみ`ECS/ContainerInsights`の`RunningTaskCount`を収集・表示します（追加CloudWatch費用あり）。アプリの Prometheus metrics を CloudWatch へ転送する設定は含みません。Base / AWSのActuator Web公開はhealth / infoのみ、localはmetrics / prometheusも公開します。認証除外はこれらの明示的pathに限定します。
 詳細は [AWS Architecture](docs/infra/AWS_ARCHITECTURE.md)、[CI/CD Pipeline](docs/infra/CI_CD_PIPELINE.md)、[Operations Runbook](docs/infra/OPERATIONS_RUNBOOK.md) を参照してください。
 
 ## Tech Stack

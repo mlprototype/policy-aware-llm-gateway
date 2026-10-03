@@ -12,11 +12,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.UUID;
+import io.github.mlprototype.gateway.audit.AuditTraceId;
 
 /**
  * Assigns a unique trace ID to each request.
- * If the client sends X-Request-Id, that value is used; otherwise a UUID is generated.
+ * Safe X-Request-Id values of 1–64 ASCII characters are preserved; otherwise a UUID is generated.
  * The trace ID is placed in MDC for log correlation and added to the response header.
  *
  * Sprint 2 extension: integrate with Micrometer traceId.
@@ -40,10 +40,7 @@ public class TraceIdFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        String traceId = request.getHeader(REQUEST_ID_HEADER);
-        if (traceId == null || traceId.isBlank()) {
-            traceId = UUID.randomUUID().toString();
-        }
+        String traceId = AuditTraceId.resolve(request.getHeader(REQUEST_ID_HEADER));
 
         MDC.put(MDC_TRACE_ID, traceId);
         // Store in request attribute for downstream access

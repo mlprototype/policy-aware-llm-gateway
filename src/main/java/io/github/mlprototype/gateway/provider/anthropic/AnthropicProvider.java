@@ -7,6 +7,7 @@ import io.github.mlprototype.gateway.provider.LlmProvider;
 import io.github.mlprototype.gateway.provider.ProviderErrorDetailExtractor;
 import io.github.mlprototype.gateway.provider.ProviderFailureClassifier;
 import io.github.mlprototype.gateway.provider.ProviderType;
+import io.github.mlprototype.gateway.provider.ProviderResponseValidator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.ParameterizedTypeReference;
@@ -78,7 +79,8 @@ public class AnthropicProvider implements LlmProvider {
                 throw failureClassifier.invalidResponse(ProviderType.ANTHROPIC, "Empty response from anthropic", null);
             }
 
-            ChatResponse response = responseMapper.toChatResponse(rawResponse);
+            ChatResponse response = ProviderResponseValidator.validate(
+                    responseMapper.toChatResponse(rawResponse), ProviderType.ANTHROPIC);
             log.debug("Received response from Anthropic: id={}", response.getId());
             return response;
 
